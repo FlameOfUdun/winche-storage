@@ -1,0 +1,27 @@
+﻿
+using System.Text.Json.Nodes;
+using Winche.Storage.Models;
+
+namespace Winche.Storage.Interfaces;
+
+public interface IFileManager
+{
+    Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default);
+    Task<FileRecord?> GetAsync(string path, CancellationToken ct = default);
+    Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct = default);
+    Task<bool> DeleteAsync(string path, CancellationToken ct = default);
+    Task<UploadSession> GenerateUploadUrlAsync(string path, CancellationToken ct = default);
+    Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default);
+    Task<FileRecord> ConfirmUploadAsync(string path, CancellationToken ct = default);
+    Task<IEnumerable<FileRecord>> ListAsync(string directory, string? mimeType = null, CancellationToken ct = default);
+    Task<UploadSession> SignPartAsync(string path, int partNumber, CancellationToken ct = default);
+    Task<IEnumerable<FilePart>> ListUploadedPartsAsync(string path, CancellationToken ct = default);
+    Task<FileRecord> SetUnprotectedAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default);
+    Task<FileRecord?> GetUnprotectedAsync(string path, CancellationToken ct = default);
+    Task<FileRecord?> UpdateUnprotectedAsync(string path, JsonObject patch, CancellationToken ct = default);
+    Task<bool> DeleteUnprotectedAsync(string path, CancellationToken ct = default);
+    Task<UploadSession> GenerateUploadUrlUnprotectedAsync(string path, CancellationToken ct = default);
+    Task<DownloadSession> GenerateDownloadUrlUnprotectedAsync(string path, CancellationToken ct = default);
+    Task<FileRecord> ConfirmUploadUnprotectedAsync(string path, CancellationToken ct = default);
+    Task<IEnumerable<FileRecord>> ListUnprotectedAsync(string directory, string? mimeType = null, CancellationToken ct = default);
+}
