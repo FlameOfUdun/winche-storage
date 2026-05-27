@@ -8,9 +8,11 @@ public static class HostExtensions
 {
     public static IHost UseWincheStorage(this IHost host)
     {
-        using var scope = host.Services.CreateScope();
-        var service = scope.ServiceProvider.GetService<ISchemaManager>()!;
-        service.EnsureCreatedAsync().GetAwaiter().GetResult();
+        Task.Run(async () =>
+        {
+            using var scope = host.Services.CreateScope();
+            await scope.ServiceProvider.GetRequiredService<ISchemaManager>().EnsureCreatedAsync();
+        }).GetAwaiter().GetResult();
 
         return host;
     }

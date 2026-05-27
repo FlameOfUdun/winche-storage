@@ -1,7 +1,7 @@
 ﻿using System.Text.Json;
 using Winche.Storage.Abstraction;
 using Winche.Storage.Models;
-using WincheSentinel.Models;
+using Winche.Sentinel.Models;
 
 namespace Winche.Storage.Sample.Configurations;
 

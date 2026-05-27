@@ -1,12 +1,14 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using Winche.Sentinel.DependencyInjection;
 using Winche.Storage.Abstraction;
 using Winche.Storage.Models;
-using WincheSentinel.DependencyInjection;
 
 namespace Winche.Storage.DependencyInjection;
 
 public sealed class DependencyConfigurator(IServiceCollection services)
 {
+    public IServiceCollection Services => services;
+
     public DependencyConfigurator AddFileAccessRule<TRule>() where TRule : FileAccessRule
     {
         services.ConfigureWincheSentinel<FileRecord>(configurator =>
@@ -21,6 +23,12 @@ public sealed class DependencyConfigurator(IServiceCollection services)
     {
         services.AddSingleton<FileStoreHook, THook>();
 
+        return this;
+    }
+
+    public DependencyConfigurator ConfigureServices(Action<IServiceCollection> configure)
+    {
+        configure(services);
         return this;
     }
 }

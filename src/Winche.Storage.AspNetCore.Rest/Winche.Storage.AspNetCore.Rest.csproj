@@ -4,10 +4,17 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <PackageId>Winche.Storage.AspNetCore.Rest</PackageId>
+    <Description>ASP.NET Core minimal-API endpoints for Winche.Storage, with pluggable claims mapping and exception handling.</Description>
+    <PackageTags>storage;files;aspnetcore;rest;minimal-api</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Winche.Sentinel.AspNetCore" Version="2.3.0" />
   </ItemGroup>
 
   <ItemGroup>

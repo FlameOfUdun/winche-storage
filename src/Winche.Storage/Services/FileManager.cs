@@ -1,13 +1,13 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using System.Text.Json.Nodes;
-using Winche.Storage.Operations;
-using Microsoft.Extensions.DependencyInjection;
-using WincheSentinel.Interfaces;
-using WincheSentinel.Models;
-using Winche.Storage.Models;
-using Winche.Storage.Interfaces;
+using Winche.Sentinel.Interfaces;
+using Winche.Sentinel.Models;
 using Winche.Storage.Constants;
+using Winche.Storage.Interfaces;
+using Winche.Storage.Models;
+using Winche.Storage.Operations;
 
 namespace Winche.Storage.Services;
 
@@ -16,6 +16,7 @@ public sealed class FileManager(
     IOptions<StoreOptions> options,
     IArchive archive,
     IAccessRuleEvaluator<FileRecord> AccessRuleEvaluator,
+    FileRecordAccessor fileRecordAccessor,
     HookInvocationDispatcher hookDispatcher
 ) : IFileManager
 {
@@ -23,19 +24,19 @@ public sealed class FileManager(
 
     public async Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default)
     {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, null, ct);
+        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, null, ct => fileRecordAccessor.GetAsync(path, ct), ct);
         return await SetUnprotectedAsync(path, mimeType, sizeBytes, metadata, ct);
     }
 
     public async Task<FileRecord?> GetAsync(string path, CancellationToken ct = default)
     {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Read, path, null, ct);
+        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Read, path, null, ct => fileRecordAccessor.GetAsync(path, ct), ct);
         return await GetUnprotectedAsync(path, ct);
     }
 
     public async Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct = default)
     {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, patch, ct);
+        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, patch, ct => fileRecordAccessor.GetAsync(path, ct), ct);
         return await UpdateUnprotectedAsync(path, patch, ct);
     }
 
@@ -52,7 +53,7 @@ public sealed class FileManager(
             var authorizedSet = new HashSet<string>(authorized.Select(r => r.Path));
 
             foreach (var candidate in authorized)
-                await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Delete, candidate.Path, null, ct);
+                await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Delete, candidate.Path, null, ct => fileRecordAccessor.GetAsync(candidate.Path, ct), ct);
 
             var deleted = await op.ExecuteAsync(path, ct);
 
@@ -92,31 +93,31 @@ public sealed class FileManager(
 
     public async Task<UploadSession> GenerateUploadUrlAsync(string path, CancellationToken ct = default)
     {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, null, ct);
+        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, null, ct => fileRecordAccessor.GetAsync(path, ct), ct);
         return await GenerateUploadUrlUnprotectedAsync(path, ct);
     }
 
     public async Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default)
     {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Read, path, null, ct);
+        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Read, path, null, ct => fileRecordAccessor.GetAsync(path, ct), ct);
         return await GenerateDownloadUrlUnprotectedAsync(path, ct);
     }
 
     public async Task<FileRecord> ConfirmUploadAsync(string path, CancellationToken ct = default)
     {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, null, ct);
+        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, null, ct => fileRecordAccessor.GetAsync(path, ct), ct);
         return await ConfirmUploadUnprotectedAsync(path, ct);
     }
 
     public async Task<IEnumerable<FileRecord>> ListAsync(string directory, string? mimeType = null, CancellationToken ct = default)
     {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Read, directory, null, ct);
+        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Read, directory, null, ct => fileRecordAccessor.GetAsync(directory, ct), ct);
         return await ListUnprotectedAsync(directory, mimeType, ct);
     }
 
     public async Task<UploadSession> SignPartAsync(string path, int partNumber, CancellationToken ct = default)
     {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, null, ct);
+        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, null, ct => fileRecordAccessor.GetAsync(path, ct), ct);
 
         var file = await GetUnprotectedAsync(path, ct)
             ?? throw new FileRecordNotFoundException(path);
@@ -140,7 +141,7 @@ public sealed class FileManager(
 
     public async Task<IEnumerable<FilePart>> ListUploadedPartsAsync(string path, CancellationToken ct = default)
     {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Read, path, null, ct);
+        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Read, path, null, ct => fileRecordAccessor.GetAsync(path, ct), ct);
 
         var file = await GetUnprotectedAsync(path, ct)
             ?? throw new FileRecordNotFoundException(path);

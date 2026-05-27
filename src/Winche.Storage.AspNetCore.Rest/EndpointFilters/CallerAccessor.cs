@@ -1,19 +1,13 @@
-﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http;
 using Winche.Storage.AspNetCore.Rest.Abstraction;
-using Winche.Storage.Services;
 
 namespace Winche.Storage.AspNetCore.Rest.EndpointFilters;
 
-internal class CallerAccessor(
-    RestClaimsMapper mapper,
-    CallerContextAccessor accessor
-) : IEndpointFilter
+internal class CallerAccessor(FileClaimsAccessor accessor) : IEndpointFilter
 {
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
-        var claims = await mapper.MapClaims(context.HttpContext);
-        accessor.SetClaims(claims);
-
+        accessor.SetClaims(context.HttpContext);
         return await next(context);
     }
 }

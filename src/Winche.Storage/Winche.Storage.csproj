@@ -1,18 +1,20 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <PackageId>Winche.Storage</PackageId>
+    <Description>PostgreSQL-backed file metadata store with path-based access control, webhook hooks, and pluggable archive backends.</Description>
+    <PackageTags>storage;files;postgresql;npgsql</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AWSSDK.S3" Version="4.0.21.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.5" />
     <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.5" />
     <PackageReference Include="Npgsql" Version="10.0.2" />
     <PackageReference Include="Npgsql.DependencyInjection" Version="10.0.2" />
-    <PackageReference Include="Winche.Sentinel" Version="1.1.0" />
+    <PackageReference Include="Winche.Sentinel" Version="2.3.0" />
   </ItemGroup>
 
 </Project>

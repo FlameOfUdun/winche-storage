@@ -4,14 +4,13 @@ using Npgsql;
 using Winche.Storage.Constants;
 using Winche.Storage.Models;
 using Winche.Storage.Operations;
-using WincheSentinel.Interfaces;
 
 namespace Winche.Storage.Services;
 
 public sealed class FileRecordAccessor(
     IOptions<StoreOptions> options,
-    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source 
-) : IResourceObjectAccessor<FileRecord>
+    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source
+)
 {
     private readonly string _table = options.Value.TableName;
 

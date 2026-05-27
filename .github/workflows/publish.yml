@@ -27,6 +27,7 @@ jobs:
         run: |
           dotnet pack src/Winche.Storage/Winche.Storage.csproj -c Release --no-build -o ./packages
           dotnet pack src/Winche.Storage.AspNetCore.Rest/Winche.Storage.AspNetCore.Rest.csproj -c Release --no-build -o ./packages
+          dotnet pack src/Winche.Storage.S3/Winche.Storage.S3.csproj -c Release --no-build -o ./packages
 
       - name: Push
         run: dotnet nuget push ./packages/*.nupkg ./packages/*.snupkg --source https://api.nuget.org/v3/index.json --api-key ${{ secrets.NUGET_API_KEY }} --skip-duplicate

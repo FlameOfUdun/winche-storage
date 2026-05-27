@@ -3,25 +3,26 @@ using Amazon.S3.Model;
 using Microsoft.Extensions.Options;
 using Winche.Storage.Interfaces;
 using Winche.Storage.Models;
+using Winche.Storage.S3.Models;
 
-namespace Winche.Storage.Archives;
+namespace Winche.Storage.S3.Archives;
 
 public sealed class S3Archive(
-    IAmazonS3 s3, 
-    IOptions<StoreOptions> options
+    IAmazonS3 s3,
+    IOptions<S3ArchiveOptions> options
 ) : IArchive
 {
-    private readonly S3ArchiveOptions options = options.Value.S3Archive 
-        ?? throw new ArgumentException("S3Archive options not configured");
+    private readonly S3ArchiveOptions options = options.Value;
 
     public Task<UploadSession> GenerateUploadUrlAsync(string path, string mimeType, long sizeBytes, CancellationToken ct = default)
     {
+        var expiresAt = DateTime.UtcNow.Add(options.PresignedUrlExpiry);
         var request = new GetPreSignedUrlRequest
         {
             BucketName = options.BucketName,
             Key = path,
             Verb = HttpVerb.PUT,
-            Expires = DateTime.UtcNow.Add(options.PresignedUrlExpiry),
+            Expires = expiresAt,
             ContentType = mimeType,
         };
         request.Headers["Content-Length"] = sizeBytes.ToString();
@@ -29,24 +30,25 @@ public sealed class S3Archive(
         return Task.FromResult(new UploadSession
         {
             Url = s3.GetPreSignedURL(request),
-            ExpiresAt = DateTime.UtcNow.Add(options.PresignedUrlExpiry),
+            ExpiresAt = expiresAt,
         });
     }
 
     public Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default)
     {
+        var expiresAt = DateTime.UtcNow.Add(options.PresignedUrlExpiry);
         var request = new GetPreSignedUrlRequest
         {
             BucketName = options.BucketName,
             Key = path,
             Verb = HttpVerb.GET,
-            Expires = DateTime.UtcNow.Add(options.PresignedUrlExpiry),
+            Expires = expiresAt,
         };
 
         return Task.FromResult(new DownloadSession
         {
             Url = s3.GetPreSignedURL(request),
-            ExpiresAt = DateTime.UtcNow.Add(options.PresignedUrlExpiry),
+            ExpiresAt = expiresAt,
         });
     }
 
@@ -119,54 +121,70 @@ public sealed class S3Archive(
 
     public Task<UploadSession> SignPartAsync(string path, string uploadId, int partNumber, CancellationToken ct = default)
     {
+        var expiresAt = DateTime.UtcNow.Add(options.PresignedUrlExpiry);
         var request = new GetPreSignedUrlRequest
         {
             BucketName = options.BucketName,
             Key = path,
             Verb = HttpVerb.PUT,
-            Expires = DateTime.UtcNow.Add(options.PresignedUrlExpiry),
+            Expires = expiresAt,
             PartNumber = partNumber,
             UploadId = uploadId,
         };
 
-        var session = new UploadSession
+        return Task.FromResult(new UploadSession
         {
             Url = s3.GetPreSignedURL(request),
-            ExpiresAt = DateTime.UtcNow.Add(options.PresignedUrlExpiry),
-        };
-        return Task.FromResult(session);
+            ExpiresAt = expiresAt,
+        });
     }
 
     public async Task CompleteMultipartUploadAsync(string path, string uploadId, CancellationToken ct = default)
     {
-        var response = await s3.ListPartsAsync(new ListPartsRequest
+        var parts = new List<PartDetail>();
+        string? marker = null;
+        ListPartsResponse listResponse;
+        do
         {
-            BucketName = options.BucketName,
-            Key = path,
-            UploadId = uploadId,
-        }, ct);
-
-        var parts = (response.Parts ?? []).OrderBy(p => p.PartNumber).ToList();
+            listResponse = await s3.ListPartsAsync(new ListPartsRequest
+            {
+                BucketName = options.BucketName,
+                Key = path,
+                UploadId = uploadId,
+                PartNumberMarker = marker,
+            }, ct);
+            parts.AddRange(listResponse.Parts ?? []);
+            marker = listResponse.NextPartNumberMarker?.ToString();
+        } while (listResponse.IsTruncated ?? false);
 
         await s3.CompleteMultipartUploadAsync(new CompleteMultipartUploadRequest
         {
             BucketName = options.BucketName,
             Key = path,
             UploadId = uploadId,
-            PartETags = [.. parts.Select(p => new PartETag(p.PartNumber ?? 1, p.ETag))],
+            PartETags = [.. parts.OrderBy(p => p.PartNumber).Select(p => new PartETag(p.PartNumber ?? 1, p.ETag))],
         }, ct);
     }
 
     public async Task<IEnumerable<FilePart>> ListPartsAsync(string path, string uploadId, CancellationToken ct = default)
     {
-        var response = await s3.ListPartsAsync(new ListPartsRequest
+        var parts = new List<PartDetail>();
+        string? marker = null;
+        ListPartsResponse listResponse;
+        do
         {
-            BucketName = options.BucketName,
-            Key = path,
-            UploadId = uploadId,
-        }, ct);
+            listResponse = await s3.ListPartsAsync(new ListPartsRequest
+            {
+                BucketName = options.BucketName,
+                Key = path,
+                UploadId = uploadId,
+                PartNumberMarker = marker,
+            }, ct);
+            parts.AddRange(listResponse.Parts ?? []);
+            marker = listResponse.NextPartNumberMarker?.ToString();
+        } while (listResponse.IsTruncated ?? false);
 
-        return (response.Parts ?? []).Select(p => new FilePart
+        return parts.Select(p => new FilePart
         {
             Number = p.PartNumber ?? 1,
             Size = p.Size,
@@ -186,7 +204,7 @@ public sealed class S3Archive(
         }
         catch (AmazonS3Exception ex) when (string.Equals(ex.ErrorCode, "NoSuchUpload", StringComparison.Ordinal))
         {
-            // Already aborted or completed — treat as success (idempotent).
+            // Already aborted or completed — idempotent.
         }
     }
 }

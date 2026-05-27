@@ -1,19 +1,22 @@
-﻿namespace Winche.Storage.Models
-{
-    public sealed record StoreOptions
-    {
-        public string Schema { get; set; } = "public";
-        public string TableName { get; set; } = "files";
-        public bool EnsureCreated { get; set; } = true;
-        public S3ArchiveOptions? S3Archive { get; set; }
-    }
+namespace Winche.Storage.Models;
 
-    public sealed record S3ArchiveOptions
-    {
-        public string BucketName { get; init; } = string.Empty;
-        public string AccessKey { get; init; } = string.Empty;
-        public string SecretKey { get; init; } = string.Empty;
-        public string RegionName { get; init; } = string.Empty;
-        public TimeSpan PresignedUrlExpiry { get; init; } = TimeSpan.FromMinutes(15);
-    }
+/// <summary>
+/// Options for configuring the database store used by Winche.Storage.
+/// </summary>
+public sealed record StoreOptions
+{
+    /// <summary>
+    /// The database schema to use for storing file metadata. Defaults to "public".
+    /// </summary>
+    public string Schema { get; set; } = "public";
+
+    /// <summary>
+    /// The name of the database table to use for storing file metadata. Defaults to "files".
+    /// </summary>
+    public string TableName { get; set; } = "files";
+
+    /// <summary>
+    /// Indicates whether the database schema and table should be automatically created if they do not exist. Defaults to true.
+    /// </summary>
+    public bool EnsureCreated { get; set; } = true;
 }

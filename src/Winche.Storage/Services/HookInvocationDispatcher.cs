@@ -2,7 +2,7 @@ using System.Threading.Channels;
 using Winche.Storage.Abstraction;
 using Winche.Storage.Interfaces;
 using Winche.Storage.Models;
-using WincheSentinel.Interfaces;
+using Winche.Sentinel.Interfaces;
 
 namespace Winche.Storage.Services;
 

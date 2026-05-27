@@ -1,6 +1,6 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Winche.Storage.Models;
-using WincheSentinel.Models;
+using Winche.Sentinel.Models;
 
 namespace Winche.Storage.AspNetCore.Rest.EndpointFilters;
 

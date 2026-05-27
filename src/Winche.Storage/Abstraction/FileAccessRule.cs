@@ -1,6 +1,6 @@
-﻿using Winche.Storage.Models;
-using WincheSentinel.Interfaces;
-using WincheSentinel.Models;
+﻿using Winche.Sentinel.Interfaces;
+using Winche.Sentinel.Models;
+using Winche.Storage.Models;
 
 namespace Winche.Storage.Abstraction;
 
