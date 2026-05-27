@@ -3,11 +3,16 @@ using System.Text.Json.Serialization;
 
 namespace Winche.Storage.Models;
 
-[JsonConverter(typeof(JsonStringEnumConverter<UploadStatus>))]
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum UploadStatus : byte
 {
+    [JsonStringEnumMemberName("pending")]
     Pending = 0,
+
+    [JsonStringEnumMemberName("complete")]
     Complete = 1,
+
+    [JsonStringEnumMemberName("failed")]
     Failed = 2
 }
 

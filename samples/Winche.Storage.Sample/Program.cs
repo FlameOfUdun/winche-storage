@@ -12,7 +12,6 @@ builder.Services.AddWincheStorage(builder.Configuration, config =>
     config.AddS3Archive(builder.Configuration);
     config.SetCallerClaimsAccessor<UserClaimsMapper>();
 });
-builder.Services.AddWincheStorageRestApi();
 
 var app = builder.Build();
 app.UseWincheStorage();

@@ -1,13 +1,13 @@
 ﻿using System.Text.Json.Serialization;
-namespace Winche.Storage.Models
+
+namespace Winche.Storage.Models;
+
+public sealed record FilePart
 {
-    public record FilePart
-    {
 
-        [JsonPropertyName("number")]
-        public required int Number { get; init; }
+    [JsonPropertyName("number")]
+    public required int Number { get; init; }
 
-        [JsonPropertyName("size")]
-        public long? Size { get; init; }
-    }
+    [JsonPropertyName("size")]
+    public long? Size { get; init; }
 }
