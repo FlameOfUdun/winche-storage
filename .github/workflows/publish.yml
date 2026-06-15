@@ -26,6 +26,7 @@ jobs:
       - name: Pack
         run: |
           dotnet pack src/Winche.Storage/Winche.Storage.csproj -c Release --no-build -o ./packages
+          dotnet pack src/Winche.Storage.AspNetCore/Winche.Storage.AspNetCore.csproj -c Release --no-build -o ./packages
           dotnet pack src/Winche.Storage.AspNetCore.Rest/Winche.Storage.AspNetCore.Rest.csproj -c Release --no-build -o ./packages
           dotnet pack src/Winche.Storage.S3/Winche.Storage.S3.csproj -c Release --no-build -o ./packages
 
