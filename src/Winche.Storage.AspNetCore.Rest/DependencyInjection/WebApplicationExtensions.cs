@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
@@ -7,101 +7,110 @@ using Winche.Storage.AspNetCore.Rest.EndpointFilters;
 using Winche.Storage.AspNetCore.Rest.Models;
 using Winche.Storage.Interfaces;
 
-namespace Winche.Storage.AspNetCore.Rest.DependencyInjection
+namespace Winche.Storage.AspNetCore.Rest.DependencyInjection;
+
+public static class WebApplicationExtensions
 {
-    public static class WebApplicationExtensions
+    /// <summary>
+    /// Maps the Winche.Storage REST surface under <c>/{prefix}</c>: CRUD via HTTP methods plus the
+    /// AIP-136 colon-verbs (<c>:confirm</c>/<c>:upload</c>/<c>:download</c>/<c>:list</c>/<c>:signPart</c>/<c>:listParts</c>).
+    /// The <c>{path}</c> segment is base64url-encoded. Returns a single
+    /// <see cref="IEndpointConventionBuilder"/> over every endpoint; apply cross-cutting policy on it.
+    /// The built-in claims/exception filters are always applied internally and run outermost.
+    /// </summary>
+    public static IEndpointConventionBuilder MapWincheStorageRestApi(this WebApplication app, string prefix = "files")
     {
-        private static string DecodeBase64(string base64)
+        var p = prefix.TrimStart('/');
+        var group = app.MapGroup($"/{p}");
+
+        group.AddEndpointFilter<ClaimsAccessor>();
+        group.AddEndpointFilter<ExceptionHandler>();
+
+        group.MapPut("/{path}", async (string path, CreateFileRequest req, IFileManager files, CancellationToken ct) =>
         {
-            byte[] bytes = Convert.FromBase64String(base64);
-            return Encoding.UTF8.GetString(bytes);
-        }
+            var decoded = DecodePath(path);
+            var file = await files.SetAsync(decoded, req.MimeType, req.SizeBytes, req.Metadata, ct);
+            return Results.Json(file);
+        });
 
-        public static WebApplication UseWincheStorageRestApi(this WebApplication app, string prefix = "files", Action<RouteGroupBuilder>? configure = null)
+        group.MapGet("/{path}", async (string path, IFileManager files, CancellationToken ct) =>
         {
-            var group = app.MapGroup(prefix);
+            var decoded = DecodePath(path);
+            var file = await files.GetAsync(decoded, ct);
+            return file is null ? Results.NotFound() : Results.Json(file);
+        });
 
-            configure?.Invoke(group);
+        group.MapPatch("/{path}", async (string path, SetMetadataRequest req, IFileManager files, CancellationToken ct) =>
+        {
+            var decoded = DecodePath(path);
+            var file = await files.UpdateMetadataAsync(decoded, req.Metadata, ct);
+            return file is null ? Results.NotFound() : Results.Json(file);
+        });
 
-            group.AddEndpointFilter<CallerAccessor>();
-            group.AddEndpointFilter<ExceptionHandler>();
+        group.MapDelete("/{path}", async (string path, IFileManager files, CancellationToken ct) =>
+        {
+            var decoded = DecodePath(path);
+            var deleted = await files.DeleteAsync(decoded, ct);
+            return deleted ? Results.NoContent() : Results.NotFound();
+        });
 
-            group.MapPost("/{path}", async (string path, CreateFileRequest req, IFileManager files, CancellationToken ct) =>
-            {
-                var decoded = DecodeBase64(path);
-                var file = await files.SetAsync(decoded, req.MimeType, req.SizeBytes, req.Metadata, ct);
-                return Results.Json(file);
-            });
+        group.MapGet("/ping", () => Results.Ok());
 
-            group.MapGet("/{path}", async (string path, IFileManager files, CancellationToken ct) =>
-            {
-                var decoded = DecodeBase64(path);
-                var file = await files.GetAsync(decoded, ct);
-                return file is null ? Results.NotFound() : Results.Json(file);
-            });
+        group.MapPost("/{path}:confirm", async (string path, IFileManager files, CancellationToken ct) =>
+        {
+            var decoded = DecodePath(path);
+            var file = await files.ConfirmUploadAsync(decoded, ct);
+            return Results.Json(file);
+        });
 
-            group.MapDelete("/{path}", async (string path, IFileManager files, CancellationToken ct) =>
-            {
-                var decoded = DecodeBase64(path);
-                var deleted = await files.DeleteAsync(decoded, ct);
-                return deleted ? Results.NoContent() : Results.NotFound();
-            });
+        group.MapPost("/{path}:upload", async (string path, IFileManager files, CancellationToken ct) =>
+        {
+            var decoded = DecodePath(path);
+            var session = await files.GenerateUploadUrlAsync(decoded, ct);
+            return Results.Json(session);
+        });
 
-            group.MapPut("/{path}/metadata", async (string path, SetMetadataRequest req, IFileManager files, CancellationToken ct) =>
-            {
-                var decoded = DecodeBase64(path);
-                var file = await files.UpdateMetadataAsync(decoded, req.Metadata, ct);
-                return file is null ? Results.NotFound() : Results.Json(file);
-            });
+        group.MapPost("/{path}:download", async (string path, IFileManager files, CancellationToken ct) =>
+        {
+            var decoded = DecodePath(path);
+            var session = await files.GenerateDownloadUrlAsync(decoded, ct);
+            return Results.Json(session);
+        });
 
-            group.MapPost("/{path}/confirm", async (string path, IFileManager files, CancellationToken ct) =>
-            {
-                var decoded = DecodeBase64(path);
-                var file = await files.ConfirmUploadAsync(decoded, ct);
-                return Results.Json(file);
-            });
+        group.MapPost("/{path}:list", async (string path, [FromQuery] string? mimeType, IFileManager files, CancellationToken ct) =>
+        {
+            var decoded = DecodePath(path);
+            var records = await files.ListAsync(decoded, mimeType, ct);
+            return Results.Json(records);
+        });
 
-            group.MapGet("/{path}/download", async (string path, IFileManager files, CancellationToken ct) =>
-            {
-                var decoded = DecodeBase64(path);
-                var file = await files.GenerateDownloadUrlAsync(decoded, ct);
-                return Results.Json(file);
-            });
+        group.MapPost("/{path}:signPart", async (string path, SignPartRequest req, IFileManager files, CancellationToken ct) =>
+        {
+            var decoded = DecodePath(path);
+            var session = await files.SignPartAsync(decoded, req.PartNumber, ct);
+            return Results.Json(session);
+        });
 
-            group.MapGet("/{path}/upload", async (string path, IFileManager files, CancellationToken ct) =>
-            {
-                var decoded = DecodeBase64(path);
-                var file = await files.GenerateUploadUrlAsync(decoded, ct);
-                return Results.Json(file);
-            });
+        group.MapPost("/{path}:listParts", async (string path, IFileManager files, CancellationToken ct) =>
+        {
+            var decoded = DecodePath(path);
+            var parts = await files.ListUploadedPartsAsync(decoded, ct);
+            return Results.Json(parts);
+        });
 
-            group.MapGet("/{path}/list", async (string path, [FromQuery] string? mimeType, IFileManager files, CancellationToken ct) =>
-            {
-                var decoded = DecodeBase64(path);
-                var records = await files.ListAsync(decoded, mimeType, ct);
-                return Results.Json(records);
-            });
+        return group;
+    }
 
-            group.MapGet("/{path}/upload/parts/{partNumber:int}", async (string path, int partNumber, IFileManager files, CancellationToken ct) =>
-            {
-                var decoded = DecodeBase64(path);
-                var session = await files.SignPartAsync(decoded, partNumber, ct);
-                return Results.Json(session);
-            });
-
-            group.MapGet("/{path}/parts", async (string path, IFileManager files, CancellationToken ct) =>
-            {
-                var decoded = DecodeBase64(path);
-                var parts = await files.ListUploadedPartsAsync(decoded, ct);
-                return Results.Json(parts);
-            });
-
-            group.MapGet("/ping", async (CancellationToken ct) =>
-            {
-                return Results.Ok();
-            });
-
-            return app;
-        }
+    /// <summary>Decodes a base64url path segment (no padding, '-'/'_' alphabet) to its UTF-8 string.</summary>
+    private static string DecodePath(string encoded)
+    {
+        var s = encoded.Replace('-', '+').Replace('_', '/');
+        s = (s.Length % 4) switch
+        {
+            2 => s + "==",
+            3 => s + "=",
+            _ => s,
+        };
+        return Encoding.UTF8.GetString(Convert.FromBase64String(s));
     }
 }

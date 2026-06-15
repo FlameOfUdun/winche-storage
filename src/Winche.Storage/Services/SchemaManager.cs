@@ -2,14 +2,14 @@
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Winche.Storage.Constants;
+using Winche.Storage.DependencyInjection;
 using Winche.Storage.Interfaces;
-using Winche.Storage.Models;
 
 namespace Winche.Storage.Services;
 
 public sealed class SchemaManager(
     [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source, 
-    IOptions<StoreOptions> options
+    IOptions<WincheStorageOptions> options
 ) : ISchemaManager
 {
     private readonly string tableName = options.Value.TableName;

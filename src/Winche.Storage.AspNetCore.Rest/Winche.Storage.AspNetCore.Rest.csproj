@@ -14,11 +14,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Winche.Sentinel.AspNetCore" Version="2.3.0" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\Winche.Storage\Winche.Storage.csproj" />
+    <ProjectReference Include="..\Winche.Storage.AspNetCore\Winche.Storage.AspNetCore.csproj" />
   </ItemGroup>
 
 </Project>

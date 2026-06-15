@@ -1,9 +1,9 @@
 using Microsoft.AspNetCore.Http;
-using Winche.Storage.AspNetCore.Rest.Abstraction;
+using Winche.Storage.AspNetCore.Abstraction;
 
 namespace Winche.Storage.AspNetCore.Rest.EndpointFilters;
 
-internal class CallerAccessor(FileClaimsAccessor accessor) : IEndpointFilter
+internal class ClaimsAccessor(FileClaimsAccessor accessor) : IEndpointFilter
 {
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {

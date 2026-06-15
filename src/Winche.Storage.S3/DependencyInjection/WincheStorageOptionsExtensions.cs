@@ -10,24 +10,20 @@ using Winche.Storage.S3.Models;
 
 namespace Winche.Storage.S3.DependencyInjection;
 
-public static class DependencyConfiguratorExtensions
+public static class WincheStorageOptionsExtensions
 {
-    public static DependencyConfigurator AddS3Archive(this DependencyConfigurator configurator, IConfiguration configuration)
+    public static WincheStorageOptions AddS3Archive(this WincheStorageOptions options, IConfiguration configuration)
     {
-        return configurator.ConfigureServices(services =>
-        {
-            services.Configure<S3ArchiveOptions>(configuration.GetSection("WincheStorage:S3Archive"));
-            RegisterS3ArchiveServices(services);
-        });
+        options.Services.Configure<S3ArchiveOptions>(configuration.GetSection("WincheStorage:S3Archive"));
+        RegisterS3ArchiveServices(options.Services);
+        return options;
     }
 
-    public static DependencyConfigurator AddS3Archive(this DependencyConfigurator configurator, Action<S3ArchiveOptions> configure)
+    public static WincheStorageOptions AddS3Archive(this WincheStorageOptions options, Action<S3ArchiveOptions> configure)
     {
-        return configurator.ConfigureServices(services =>
-        {
-            services.Configure(configure);
-            RegisterS3ArchiveServices(services);
-        });
+        options.Services.Configure(configure);
+        RegisterS3ArchiveServices(options.Services);
+        return options;
     }
 
     private static void RegisterS3ArchiveServices(IServiceCollection services)
@@ -55,6 +51,7 @@ public static class DependencyConfiguratorExtensions
                 : new AmazonS3Client(opts.AccessKey, opts.SecretKey, region);
         });
 
+        // Registered inside the AddWincheStorage lambda → overrides the NullArchive default.
         services.AddSingleton<IArchive, S3Archive>();
     }
 }

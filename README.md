@@ -1,16 +1,50 @@
 # Winche.Storage
 
-Lightweight .NET libraries for storing file metadata in PostgreSQL and objects in S3-compatible archives via presigned URLs. The solution includes core abstractions, an S3 archive provider, a minimal REST adapter for ASP.NET Core, and a sample app.
+Lightweight .NET libraries for storing file metadata in PostgreSQL and objects in S3-compatible archives via presigned URLs. The solution includes core abstractions, an S3 archive provider, an ASP.NET Core base + REST adapter, and a sample app.
 
-Integrates with [Winche.Sentinel](https://github.com/FlameOfUdun/winche-sentinel) for access control.
+Access control is enforced with [Winche.Rules](https://github.com/FlameOfUdun/winche-rules) — the same Firestore-style rules engine used by `Winche.Database`.
 
 ## Packages
 
 | Package | Description |
 | --- | --- |
-| `Winche.Storage` | Core: schema management, file CRUD, hooks, access rules |
+| `Winche.Storage` | Core: schema management, file CRUD, hooks, Winche.Rules guard |
 | `Winche.Storage.S3` | S3-compatible archive provider (presigned URLs, multipart upload) |
-| `Winche.Storage.AspNetCore.Rest` | Minimal API REST endpoints + claims accessor base |
+| `Winche.Storage.AspNetCore` | ASP.NET Core base: HTTP-context claims mapping (`MapClaims`) |
+| `Winche.Storage.AspNetCore.Rest` | Minimal-API REST endpoints (depends on the base package) |
+
+## Architecture
+
+Package dependencies:
+
+```mermaid
+flowchart TD
+    Rest["Winche.Storage.AspNetCore.Rest<br/>MapWincheStorageRestApi"]
+    Base["Winche.Storage.AspNetCore<br/>FileClaimsAccessor · MapClaims"]
+    S3["Winche.Storage.S3<br/>AddS3Archive · S3Archive"]
+    Core["Winche.Storage<br/>IFileManager · guard · schema · hooks"]
+    Rules["Winche.Rules<br/>RuleEngine · RulesetBuilder · Expr"]
+
+    Rest --> Base
+    Rest --> Core
+    Base --> Core
+    S3 --> Core
+    Core --> Rules
+```
+
+Runtime components inside the core. The public `IFileManager` is the rules guard; it authorizes
+through the `RuleEngine`, then delegates to the unprotected `FileManager`, which talks to Postgres
+and the pluggable archive:
+
+```mermaid
+flowchart LR
+    IFM["IFileManager"] --> Guard["RuleGuardedFileManager"]
+    Guard -->|authorize| Engine["RuleEngine"]
+    Guard -->|delegate| Core["FileManager"]
+    Engine --> Claims["IRuleClaimsAccessor"]
+    Core --> DB[("PostgreSQL")]
+    Core --> Archive["IArchive<br/>NullArchive / S3Archive"]
+```
 
 ## Install
 
@@ -29,10 +63,6 @@ dotnet add package Winche.Storage.AspNetCore.Rest
   "ConnectionStrings": {
     "WincheStorage": "Host=localhost;Database=mydb;Username=user;Password=pass"
   },
-  "WincheStorage": {
-    "Schema": "public",
-    "TableName": "files"
-  },
   "WincheStorage:S3Archive": {
     "BucketName": "your-bucket",
     "RegionName": "us-east-1",
@@ -45,50 +75,74 @@ dotnet add package Winche.Storage.AspNetCore.Rest
 
 `AccessKey` and `SecretKey` are optional. Omit them when deploying to AWS with a task role or instance profile — the SDK uses ambient IAM credentials automatically.
 
-The connection string is read from `WincheStorage`, falling back to `DefaultConnection`.
+For a non-`public` schema, add `Search Path=myschema` to the connection string (the metadata table is created in the connection's `search_path`).
 
 ### 2. Register services
 
 ```csharp
-builder.Services.AddWincheStorage(builder.Configuration, config =>
-{
-    config.AddS3Archive(builder.Configuration);
-});
+using Winche.Rules;
+using Winche.Rules.Expressions;
+using Winche.Storage.AspNetCore.DependencyInjection;       // MapClaims
+using Winche.Storage.DependencyInjection;                  // AddWincheStorage
+using Winche.Storage.S3.DependencyInjection;               // AddS3Archive
 
-builder.Services.AddWincheStorageRestApi();
+builder.Services.AddWincheStorage(opts =>
+{
+    opts.ConnectionString = builder.Configuration.GetConnectionString("WincheStorage");
+
+    // Default-deny. Grant access with one or more rule blocks.
+    opts.UseRules(r => r.Match("userFiles/{userId}/{rest=**}", owned =>
+        owned.Allow(RuleOperations.All, Expr.Auth("token", "userId").Eq(Expr.Param("userId")))));
+
+    opts.AddS3Archive(builder.Configuration);
+
+    // Map HTTP requests to caller claims consumed by the rules engine.
+    opts.MapClaims(ctx => new Dictionary<string, object?>
+    {
+        ["userId"] = ctx.Request.Headers["X-USER-ID"].ToString(),
+    });
+});
 ```
 
 ### 3. Initialize schema and map endpoints
 
 ```csharp
-app.UseWincheStorage();           // creates the files table if it doesn't exist
-app.UseWincheStorageRestApi();    // maps REST routes under "files/" prefix
+await app.InitializeWincheStorageAsync();   // creates the files table if it doesn't exist
+app.MapWincheStorageRestApi();              // maps REST routes under the "files/" prefix
 ```
 
 See [samples/Winche.Storage.Sample](samples/Winche.Storage.Sample) for a complete working example.
 
 ## Configuration
 
-### `AddWincheStorage` overloads
+### `AddWincheStorage`
+
+A single overload takes an `Action<WincheStorageOptions>`. Set the connection string and register
+components inside the lambda:
 
 ```csharp
-// Read connection string and options from IConfiguration
-services.AddWincheStorage(configuration, configure);
-
-// Provide connection string and options explicitly
-services.AddWincheStorage(
-    options => { options.Schema = "storage"; options.TableName = "files"; },
-    connectionString: "...",
-    configure);
+services.AddWincheStorage(opts =>
+{
+    opts.ConnectionString = "Host=...;Database=...;Username=...;Password=...";
+    opts.TableName = "files";
+    opts.UseRules(/* ... */);
+    opts.AddFileStoreHook<AuditHook>();
+    opts.AddS3Archive(/* IConfiguration or Action<S3ArchiveOptions> */);
+    opts.MapClaims(/* Func<HttpContext, IReadOnlyDictionary<string, object?>?> */);
+});
 ```
 
-### `StoreOptions`
+### `WincheStorageOptions`
 
-| Property | Default | Description |
-| --- | --- | --- |
-| `Schema` | `"public"` | PostgreSQL schema for the metadata table |
-| `TableName` | `"files"` | Table name for file records |
-| `EnsureCreated` | `true` | Auto-create schema/table on startup |
+| Member | Description |
+| --- | --- |
+| `ConnectionString` | _(required)_ Postgres connection string. Schema comes from its `Search Path`. |
+| `TableName` | Table name for file records (default `"files"`). |
+| `UseRules(...)` | Adds a `RuleSet` to the guard. Multiple calls accumulate (OR-combined). |
+| `AddFileStoreHook<T>()` | Registers a `FileStoreHook` lifecycle listener. |
+
+`AddS3Archive` (from `Winche.Storage.S3`) and `MapClaims` (from `Winche.Storage.AspNetCore`) are
+extension methods on `WincheStorageOptions`.
 
 ### `S3ArchiveOptions`
 
@@ -103,84 +157,183 @@ services.AddWincheStorage(
 You can also configure S3 with a delegate instead of `IConfiguration`:
 
 ```csharp
-config.AddS3Archive(opts =>
+opts.AddS3Archive(s3 =>
 {
-    opts.BucketName = "my-bucket";
-    opts.RegionName = "eu-west-1";
+    s3.BucketName = "my-bucket";
+    s3.RegionName = "eu-west-1";
 });
 ```
 
 ## REST Endpoints
 
-All `{path}` segments are **base64-encoded** file paths or directory paths.
+All `{path}` segments are **base64url-encoded** file paths (or directory paths for `:list`). CRUD
+uses HTTP methods; per-file operations use AIP-136 colon-verbs (all `POST`).
 
 | Method | Route | Description |
 | --- | --- | --- |
-| `POST` | `/{path}` | Register a new file record |
+| `PUT` | `/{path}` | Register a new file record |
 | `GET` | `/{path}` | Get a file record |
-| `DELETE` | `/{path}` | Delete a file record and its archive object |
-| `PUT` | `/{path}/metadata` | Replace file metadata |
-| `POST` | `/{path}/confirm` | Confirm a direct upload is complete |
-| `GET` | `/{path}/upload` | Generate a presigned upload URL |
-| `GET` | `/{path}/download` | Generate a presigned download URL |
-| `GET` | `/{path}/list` | List files in a directory (`?mimeType=` filter optional) |
-| `GET` | `/{path}/upload/parts/{partNumber}` | Sign a multipart upload part |
-| `GET` | `/{path}/parts` | List uploaded parts for a multipart upload |
+| `PATCH` | `/{path}` | Update file metadata |
+| `DELETE` | `/{path}` | Delete a file record (and its archive object) |
+| `GET` | `/ping` | Liveness check |
+| `POST` | `/{path}:confirm` | Confirm an upload is complete |
+| `POST` | `/{path}:upload` | Generate a presigned upload URL |
+| `POST` | `/{path}:download` | Generate a presigned download URL |
+| `POST` | `/{path}:list` | List files in a directory (`?mimeType=` filter optional) |
+| `POST` | `/{path}:signPart` | Sign a multipart upload part (`{ "partNumber": N }`) |
+| `POST` | `/{path}:listParts` | List uploaded parts for a multipart upload |
 
-### Custom prefix and middleware
+`MapWincheStorageRestApi` returns a single `IEndpointConventionBuilder` covering every endpoint, so
+cross-cutting policy applies to all of them:
 
 ```csharp
-app.UseWincheStorageRestApi(
-    prefix: "storage",
-    configure: group => group.RequireAuthorization());
+app.MapWincheStorageRestApi(prefix: "storage")
+   .RequireAuthorization();
+```
+
+### Request pipeline
+
+Every endpoint runs the built-in `ClaimsAccessor` filter (maps the request to caller claims) and the
+`ExceptionHandler` filter (translates exceptions to status codes), outermost, before the handler
+decodes the base64url path and calls `IFileManager`:
+
+```mermaid
+flowchart LR
+    Req["HTTP<br/>/files/{base64url}:verb"] --> CA["ClaimsAccessor<br/>SetClaims(HttpContext)"]
+    CA --> EH["ExceptionHandler"]
+    EH --> Handler["handler<br/>DecodePath → IFileManager"]
+    Handler --> Ok["Results.Json"]
+    EH -. on exception .-> Err["403 AccessDenied<br/>404 NotFound<br/>400 InvalidStatus<br/>500 other"]
+```
+
+### Upload lifecycle
+
+A record is registered first (status `pending`), uploaded directly to the archive via presigned URLs
+(single or multipart), then confirmed (status `complete`). Downloads require `complete`:
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as Storage API
+    participant Arch as Archive
+
+    Client->>API: PUT /{path}  (register, status=pending)
+    alt single upload
+        Client->>API: POST /{path}:upload
+        API-->>Client: presigned PUT URL
+        Client->>Arch: upload object
+    else multipart upload
+        loop part 1..N
+            Client->>API: POST /{path}:signPart {partNumber}
+            API-->>Client: presigned part URL
+            Client->>Arch: upload part
+        end
+    end
+    Client->>API: POST /{path}:confirm
+    API->>Arch: complete / verify object
+    API-->>Client: FileRecord (status=complete)
+    Client->>API: POST /{path}:download
+    API-->>Client: presigned GET URL
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: register
+    pending --> complete: confirm
+    complete --> [*]: download
 ```
 
 ## Access Control
 
-Implement `FileAccessRule` to guard file operations. Rules are evaluated by Winche.Sentinel for every protected `IFileManager` call.
+Authorization is expressed as [Winche.Rules](https://github.com/FlameOfUdun/winche-rules) rule
+blocks via `opts.UseRules(...)`. Access is **default-deny**: with no matching `Allow`, every
+protected call throws `AccessDeniedException`. Multiple `UseRules` calls accumulate and are
+OR-combined.
 
 ```csharp
-public class AllowOwnerAccess : FileAccessRule
-{
-    public override string Path => "userFiles/{userId}/**";
-
-    public override IReadOnlySet<AccessOperation> Operations =>
-        new HashSet<AccessOperation> { AccessOperation.Read, AccessOperation.Write, AccessOperation.Delete };
-
-    public override Task<bool> EvaluateAsync(AccessContext<FileRecord> context, CancellationToken ct)
+opts.UseRules(r => r
+    .Match("userFiles/{userId}/{rest=**}", owned =>
     {
-        var claimUserId = context.Claims.GetValueOrDefault("userId")?.ToString();
-        var pathUserId  = context.Params.GetValueOrDefault("userId")?.ToString();
-        return Task.FromResult(claimUserId == pathUserId);
-    }
-}
+        // Owner has full access to their own subtree.
+        owned.Allow(RuleOperations.All, Expr.Auth("token", "userId").Eq(Expr.Param("userId")));
+    })
+    .Match("public/{rest=**}", pub =>
+    {
+        // Anyone may read public files.
+        pub.Allow(RuleOperations.Read, Expr.Const(true));
+    }));
 ```
 
-- `Path` is a glob pattern; named segments like `{userId}` are captured into `context.Params`.
-- `context.Claims` contains the values returned by your `FileClaimsAccessor`.
-- Register with `config.AddFileAccessRule<AllowOwnerAccess>()`.
+- Path patterns use `{param}` single-segment captures and a trailing `{name=**}` recursive capture,
+  readable in conditions via `Expr.Param("param")`.
+- Operations: `RuleOperations.Read` (get + list), `RuleOperations.Write` (create + update + delete),
+  `RuleOperations.All`, or individual `RuleOperation` values.
+- The existing file is exposed to conditions as `resource` — e.g. `Expr.Resource("mimeType")`,
+  `Expr.Resource("sizeBytes")`, `Expr.Resource("metadata", "ownerId")`.
+- Caller claims are exposed under `request.auth`: `Expr.Auth("uid")` (the `uid` claim, if any) and
+  `Expr.Auth("token", "<claim>")` (any mapped claim).
 
-### Claims Accessor (REST)
+Storage operations map to rule operations as follows:
 
-Map HTTP request data to claims that access rules can read:
+| `IFileManager` call | Rule operation |
+| --- | --- |
+| `SetAsync` | `Create` |
+| `GetAsync`, `GenerateDownloadUrlAsync`, `ListUploadedPartsAsync` | `Get` |
+| `ListAsync` | `List` |
+| `UpdateMetadataAsync`, `ConfirmUploadAsync`, `GenerateUploadUrlAsync`, `SignPartAsync` | `Update` |
+| `DeleteAsync` | `Delete` |
+
+### Authorization flow
+
+A protected call loads the current record (as `resource`), gathers caller claims, and asks the
+`RuleEngine`. If no rule allows the operation it throws `AccessDeniedException` (default-deny);
+otherwise it delegates to the unprotected core. Writes follow the same path, authorizing before the
+mutation (a create has no prior `resource`):
+
+```mermaid
+sequenceDiagram
+    actor Caller
+    participant Guard as RuleGuardedFileManager
+    participant Core as FileManager
+    participant Claims as IRuleClaimsAccessor
+    participant Engine as RuleEngine
+
+    Caller->>Guard: GetAsync(path)
+    Guard->>Core: GetUnprotectedAsync(path)
+    Core-->>Guard: FileRecord (resource)
+    Guard->>Claims: GetClaims()
+    Claims-->>Guard: caller claims
+    Guard->>Engine: AllowsAsync(Get, path, request)
+    alt allowed
+        Engine-->>Guard: true
+        Guard-->>Caller: FileRecord
+    else denied
+        Engine-->>Guard: false
+        Guard--xCaller: AccessDeniedException
+    end
+```
+
+### Claims mapping
+
+`MapClaims` (from `Winche.Storage.AspNetCore`) maps the HTTP request to the caller-claims dictionary
+the rules engine reads. The dictionary is exposed as `request.auth.token.*`, and a `uid` key (if
+present) also as `request.auth.uid`.
 
 ```csharp
-public class UserClaimsMapper : FileClaimsAccessor
+opts.MapClaims(ctx => new Dictionary<string, object?>
 {
-    public override IReadOnlyDictionary<string, object?> MapClaims(HttpContext httpContext) =>
-        new Dictionary<string, object?>
-        {
-            ["userId"] = httpContext.Request.Headers.TryGetValue("X-USER-ID", out var id)
-                ? id.ToString() : ""
-        };
-}
+    ["uid"]    = ctx.User.FindFirst("sub")?.Value,
+    ["userId"] = ctx.Request.Headers["X-USER-ID"].ToString(),
+});
 ```
 
-Register: `config.SetCallerClaimsAccessor<UserClaimsMapper>()`.
+For non-HTTP callers (background services, tests), inject `FileClaimsAccessor` and call
+`SetClaims(...)` directly before invoking `IFileManager`.
 
 ## Hooks
 
-Implement `FileStoreHook` to react to file lifecycle events. Hooks are matched by `Path` (same glob syntax as access rules) and dispatched asynchronously.
+Implement `FileStoreHook` to react to file lifecycle events. Hooks are matched by `Path` (the same
+pattern syntax as rules) and dispatched asynchronously.
 
 ```csharp
 public class AuditHook : FileStoreHook
@@ -196,14 +349,16 @@ public class AuditHook : FileStoreHook
 }
 ```
 
-Register: `config.AddFileStoreHook<AuditHook>()`.
+Register: `opts.AddFileStoreHook<AuditHook>()`.
 
 ## `IFileManager`
 
-Inject `IFileManager` directly to interact with the store without going through the REST layer.
+Inject `IFileManager` directly to interact with the store. The default `IFileManager` is the rules
+guard; protected methods authorize via Winche.Rules, while the `*Unprotected*` variants bypass the
+guard for trusted server-side callers.
 
 ```csharp
-// Protected variants — access rules are enforced
+// Protected variants — rules are enforced
 Task<FileRecord>               SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata, CancellationToken ct);
 Task<FileRecord?>              GetAsync(string path, CancellationToken ct);
 Task<FileRecord?>              UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct);
@@ -215,7 +370,7 @@ Task<IEnumerable<FileRecord>>  ListAsync(string directory, string? mimeType, Can
 Task<UploadSession>            SignPartAsync(string path, int partNumber, CancellationToken ct);
 Task<IEnumerable<FilePart>>    ListUploadedPartsAsync(string path, CancellationToken ct);
 
-// Unprotected variants — bypass access rules (for server-side / trusted callers)
+// Unprotected variants — bypass rules (for server-side / trusted callers)
 Task<FileRecord>               SetUnprotectedAsync(...)
 Task<FileRecord?>              GetUnprotectedAsync(...)
 // ... same surface, Unprotected suffix

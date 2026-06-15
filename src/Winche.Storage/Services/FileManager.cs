@@ -2,10 +2,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using System.Text.Json.Nodes;
-using Winche.Sentinel.Interfaces;
-using Winche.Sentinel.Models;
 using Winche.Storage.Constants;
 using Winche.Storage.Interfaces;
+using Winche.Storage.DependencyInjection;
 using Winche.Storage.Models;
 using Winche.Storage.Operations;
 
@@ -13,112 +12,39 @@ namespace Winche.Storage.Services;
 
 public sealed class FileManager(
     [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
-    IOptions<StoreOptions> options,
+    IOptions<WincheStorageOptions> options,
     IArchive archive,
-    IAccessRuleEvaluator<FileRecord> AccessRuleEvaluator,
-    FileRecordAccessor fileRecordAccessor,
     HookInvocationDispatcher hookDispatcher
 ) : IFileManager
 {
     private readonly string tableName = options.Value.TableName;
 
-    public async Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default)
-    {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, null, ct => fileRecordAccessor.GetAsync(path, ct), ct);
-        return await SetUnprotectedAsync(path, mimeType, sizeBytes, metadata, ct);
-    }
+    public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default) =>
+        SetUnprotectedAsync(path, mimeType, sizeBytes, metadata, ct);
 
-    public async Task<FileRecord?> GetAsync(string path, CancellationToken ct = default)
-    {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Read, path, null, ct => fileRecordAccessor.GetAsync(path, ct), ct);
-        return await GetUnprotectedAsync(path, ct);
-    }
+    public Task<FileRecord?> GetAsync(string path, CancellationToken ct = default) =>
+        GetUnprotectedAsync(path, ct);
 
-    public async Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct = default)
-    {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, patch, ct => fileRecordAccessor.GetAsync(path, ct), ct);
-        return await UpdateUnprotectedAsync(path, patch, ct);
-    }
+    public Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct = default) =>
+        UpdateUnprotectedAsync(path, patch, ct);
 
-    public async Task<bool> DeleteAsync(string path, CancellationToken ct = default)
-    {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(ct);
+    public Task<bool> DeleteAsync(string path, CancellationToken ct = default) =>
+        DeleteUnprotectedAsync(path, ct);
 
-        try
-        {
-            var op = new DeleteFileOperation(conn, tx, tableName);
+    public Task<UploadSession> GenerateUploadUrlAsync(string path, CancellationToken ct = default) =>
+        GenerateUploadUrlUnprotectedAsync(path, ct);
 
-            var authorized = await op.SelectForUpdateAsync(path, ct);
-            var authorizedSet = new HashSet<string>(authorized.Select(r => r.Path));
+    public Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default) =>
+        GenerateDownloadUrlUnprotectedAsync(path, ct);
 
-            foreach (var candidate in authorized)
-                await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Delete, candidate.Path, null, ct => fileRecordAccessor.GetAsync(candidate.Path, ct), ct);
+    public Task<FileRecord> ConfirmUploadAsync(string path, CancellationToken ct = default) =>
+        ConfirmUploadUnprotectedAsync(path, ct);
 
-            var deleted = await op.ExecuteAsync(path, ct);
-
-            var stowaways = deleted.Where(p => !authorizedSet.Contains(p)).ToList();
-            if (stowaways.Count > 0)
-            {
-                await tx.RollbackAsync(ct);
-                throw new ConcurrentSubtreeModificationException(path, stowaways);
-            }
-
-            foreach (var candidate in authorized)
-            {
-                if (candidate.UploadStatus == UploadStatus.Pending && candidate.UploadId is not null)
-                    await archive.AbortMultipartUploadAsync(candidate.Path, candidate.UploadId, ct);
-            }
-
-            if (deleted.Count > 0)
-                await archive.DeleteObjectsAsync(deleted, ct);
-
-            await tx.CommitAsync(ct);
-
-            foreach (var p in deleted)
-                hookDispatcher.Enqueue(p, (h, t) => h.OnFileDeletedAsync(p, t));
-
-            return deleted.Count > 0;
-        }
-        catch (ConcurrentSubtreeModificationException)
-        {
-            throw;
-        }
-        catch
-        {
-            try { await tx.RollbackAsync(ct); } catch { }
-            throw;
-        }
-    }
-
-    public async Task<UploadSession> GenerateUploadUrlAsync(string path, CancellationToken ct = default)
-    {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, null, ct => fileRecordAccessor.GetAsync(path, ct), ct);
-        return await GenerateUploadUrlUnprotectedAsync(path, ct);
-    }
-
-    public async Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default)
-    {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Read, path, null, ct => fileRecordAccessor.GetAsync(path, ct), ct);
-        return await GenerateDownloadUrlUnprotectedAsync(path, ct);
-    }
-
-    public async Task<FileRecord> ConfirmUploadAsync(string path, CancellationToken ct = default)
-    {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, null, ct => fileRecordAccessor.GetAsync(path, ct), ct);
-        return await ConfirmUploadUnprotectedAsync(path, ct);
-    }
-
-    public async Task<IEnumerable<FileRecord>> ListAsync(string directory, string? mimeType = null, CancellationToken ct = default)
-    {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Read, directory, null, ct => fileRecordAccessor.GetAsync(directory, ct), ct);
-        return await ListUnprotectedAsync(directory, mimeType, ct);
-    }
+    public Task<IEnumerable<FileRecord>> ListAsync(string directory, string? mimeType = null, CancellationToken ct = default) =>
+        ListUnprotectedAsync(directory, mimeType, ct);
 
     public async Task<UploadSession> SignPartAsync(string path, int partNumber, CancellationToken ct = default)
     {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Write, path, null, ct => fileRecordAccessor.GetAsync(path, ct), ct);
-
         var file = await GetUnprotectedAsync(path, ct)
             ?? throw new FileRecordNotFoundException(path);
 
@@ -141,8 +67,6 @@ public sealed class FileManager(
 
     public async Task<IEnumerable<FilePart>> ListUploadedPartsAsync(string path, CancellationToken ct = default)
     {
-        await AccessRuleEvaluator.EvaluateAsync(AccessOperation.Read, path, null, ct => fileRecordAccessor.GetAsync(path, ct), ct);
-
         var file = await GetUnprotectedAsync(path, ct)
             ?? throw new FileRecordNotFoundException(path);
 
@@ -264,7 +188,7 @@ public sealed class FileManager(
         }
 
         await using var conn = await source.OpenConnectionAsync(ct);
-        var record = await new ConfirmUploadOperation(conn, null, options.Value.TableName).ExecuteAsync(path, ct)
+        var record = await new ConfirmUploadOperation(conn, null, tableName).ExecuteAsync(path, ct)
             ?? throw new FileRecordNotFoundException(path);
         hookDispatcher.Enqueue(path, (h, t) => h.OnUploadConfirmedAsync(record, t));
         return record;
