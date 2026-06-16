@@ -1,10 +1,11 @@
 using Npgsql;
+using Winche.Storage.Constants;
 using Winche.Storage.Infrastructure;
 using Winche.Storage.Models;
 
 namespace Winche.Storage.Operations;
 
-internal sealed class ConfirmUploadOperation(NpgsqlConnection conn, NpgsqlTransaction? tx, string table)
+internal sealed class ConfirmUploadOperation(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
     internal async Task<FileRecord?> ExecuteAsync(string path, CancellationToken ct)
     {
@@ -13,7 +14,7 @@ internal sealed class ConfirmUploadOperation(NpgsqlConnection conn, NpgsqlTransa
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
-            UPDATE {table}
+            UPDATE {WincheTables.Files}
             SET upload_status = @status, updated_at = NOW()
             WHERE path = @path
             RETURNING *
@@ -26,4 +27,3 @@ internal sealed class ConfirmUploadOperation(NpgsqlConnection conn, NpgsqlTransa
         return await NpgsqlFileReader.ReadSingleAsync(reader, ct);
     }
 }
- 

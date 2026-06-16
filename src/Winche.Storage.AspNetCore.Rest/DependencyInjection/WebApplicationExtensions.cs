@@ -26,28 +26,28 @@ public static class WebApplicationExtensions
         group.AddEndpointFilter<ClaimsAccessor>();
         group.AddEndpointFilter<ExceptionHandler>();
 
-        group.MapPut("/{path}", async (string path, CreateFileRequest req, IFileManager files, CancellationToken ct) =>
+        group.MapPut("/{path}", async (string path, CreateFileRequest req, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
             var file = await files.SetAsync(decoded, req.MimeType, req.SizeBytes, req.Metadata, ct);
             return Results.Json(file);
         });
 
-        group.MapGet("/{path}", async (string path, IFileManager files, CancellationToken ct) =>
+        group.MapGet("/{path}", async (string path, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
             var file = await files.GetAsync(decoded, ct);
             return file is null ? Results.NotFound() : Results.Json(file);
         });
 
-        group.MapPatch("/{path}", async (string path, SetMetadataRequest req, IFileManager files, CancellationToken ct) =>
+        group.MapPatch("/{path}", async (string path, SetMetadataRequest req, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
             var file = await files.UpdateMetadataAsync(decoded, req.Metadata, ct);
             return file is null ? Results.NotFound() : Results.Json(file);
         });
 
-        group.MapDelete("/{path}", async (string path, IFileManager files, CancellationToken ct) =>
+        group.MapDelete("/{path}", async (string path, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
             var deleted = await files.DeleteAsync(decoded, ct);
@@ -56,42 +56,42 @@ public static class WebApplicationExtensions
 
         group.MapGet("/ping", () => Results.Ok());
 
-        group.MapPost("/{path}:confirm", async (string path, IFileManager files, CancellationToken ct) =>
+        group.MapPost("/{path}:confirm", async (string path, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
             var file = await files.ConfirmUploadAsync(decoded, ct);
             return Results.Json(file);
         });
 
-        group.MapPost("/{path}:upload", async (string path, IFileManager files, CancellationToken ct) =>
+        group.MapPost("/{path}:upload", async (string path, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
             var session = await files.GenerateUploadUrlAsync(decoded, ct);
             return Results.Json(session);
         });
 
-        group.MapPost("/{path}:download", async (string path, IFileManager files, CancellationToken ct) =>
+        group.MapPost("/{path}:download", async (string path, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
             var session = await files.GenerateDownloadUrlAsync(decoded, ct);
             return Results.Json(session);
         });
 
-        group.MapPost("/{path}:list", async (string path, [FromQuery] string? mimeType, IFileManager files, CancellationToken ct) =>
+        group.MapPost("/{path}:list", async (string path, [FromQuery] string? mimeType, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
             var records = await files.ListAsync(decoded, mimeType, ct);
             return Results.Json(records);
         });
 
-        group.MapPost("/{path}:signPart", async (string path, SignPartRequest req, IFileManager files, CancellationToken ct) =>
+        group.MapPost("/{path}:signPart", async (string path, SignPartRequest req, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
             var session = await files.SignPartAsync(decoded, req.PartNumber, ct);
             return Results.Json(session);
         });
 
-        group.MapPost("/{path}:listParts", async (string path, IFileManager files, CancellationToken ct) =>
+        group.MapPost("/{path}:listParts", async (string path, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
             var parts = await files.ListUploadedPartsAsync(decoded, ct);

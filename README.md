@@ -21,8 +21,8 @@ Package dependencies:
 flowchart TD
     Rest["Winche.Storage.AspNetCore.Rest<br/>MapWincheStorageRestApi"]
     Base["Winche.Storage.AspNetCore<br/>FileClaimsAccessor · MapClaims"]
-    S3["Winche.Storage.S3<br/>AddS3Archive · S3Archive"]
-    Core["Winche.Storage<br/>IFileManager · guard · schema · hooks"]
+    S3["Winche.Storage.S3<br/>UseS3Archive · S3Archive"]
+    Core["Winche.Storage<br/>IFileStorage · guard · schema · hooks"]
     Rules["Winche.Rules<br/>RuleEngine · RulesetBuilder · Expr"]
 
     Rest --> Base
@@ -32,15 +32,15 @@ flowchart TD
     Core --> Rules
 ```
 
-Runtime components inside the core. The public `IFileManager` is the rules guard; it authorizes
-through the `RuleEngine`, then delegates to the unprotected `FileManager`, which talks to Postgres
+Runtime components inside the core. The public `IFileStorage` is the rules guard; it authorizes
+through the `RuleEngine`, then delegates to the unprotected `FileStorage`, which talks to Postgres
 and the pluggable archive:
 
 ```mermaid
 flowchart LR
-    IFM["IFileManager"] --> Guard["RuleGuardedFileManager"]
+    IFM["IFileStorage"] --> Guard["RuleGuardedFileStorage"]
     Guard -->|authorize| Engine["RuleEngine"]
-    Guard -->|delegate| Core["FileManager"]
+    Guard -->|delegate| Core["FileStorage"]
     Engine --> Claims["IRuleClaimsAccessor"]
     Core --> DB[("PostgreSQL")]
     Core --> Archive["IArchive<br/>NullArchive / S3Archive"]
@@ -84,7 +84,7 @@ using Winche.Rules;
 using Winche.Rules.Expressions;
 using Winche.Storage.AspNetCore.DependencyInjection;       // MapClaims
 using Winche.Storage.DependencyInjection;                  // AddWincheStorage
-using Winche.Storage.S3.DependencyInjection;               // AddS3Archive
+using Winche.Storage.S3.DependencyInjection;               // UseS3Archive
 
 builder.Services.AddWincheStorage(opts =>
 {
@@ -94,7 +94,7 @@ builder.Services.AddWincheStorage(opts =>
     opts.UseRules(r => r.Match("userFiles/{userId}/{rest=**}", owned =>
         owned.Allow(RuleOperations.All, Expr.Auth("token", "userId").Eq(Expr.Param("userId")))));
 
-    opts.AddS3Archive(builder.Configuration);
+    opts.UseS3Archive(s3 => builder.Configuration.GetSection("WincheStorage:S3Archive").Bind(s3));
 
     // Map HTTP requests to caller claims consumed by the rules engine.
     opts.MapClaims(ctx => new Dictionary<string, object?>
@@ -107,7 +107,7 @@ builder.Services.AddWincheStorage(opts =>
 ### 3. Initialize schema and map endpoints
 
 ```csharp
-await app.InitializeWincheStorageAsync();   // creates the files table if it doesn't exist
+await app.InitializeWincheStorageAsync();   // creates the winche_files table if it doesn't exist
 app.MapWincheStorageRestApi();              // maps REST routes under the "files/" prefix
 ```
 
@@ -124,10 +124,9 @@ components inside the lambda:
 services.AddWincheStorage(opts =>
 {
     opts.ConnectionString = "Host=...;Database=...;Username=...;Password=...";
-    opts.TableName = "files";
     opts.UseRules(/* ... */);
-    opts.AddFileStoreHook<AuditHook>();
-    opts.AddS3Archive(/* IConfiguration or Action<S3ArchiveOptions> */);
+    opts.AddHook<AuditHook>();
+    opts.UseS3Archive(/* Action<S3ArchiveOptions> */);
     opts.MapClaims(/* Func<HttpContext, IReadOnlyDictionary<string, object?>?> */);
 });
 ```
@@ -137,11 +136,10 @@ services.AddWincheStorage(opts =>
 | Member | Description |
 | --- | --- |
 | `ConnectionString` | _(required)_ Postgres connection string. Schema comes from its `Search Path`. |
-| `TableName` | Table name for file records (default `"files"`). |
 | `UseRules(...)` | Adds a `RuleSet` to the guard. Multiple calls accumulate (OR-combined). |
-| `AddFileStoreHook<T>()` | Registers a `FileStoreHook` lifecycle listener. |
+| `AddHook<T>()` | Registers a `FileStoreHook` lifecycle listener. |
 
-`AddS3Archive` (from `Winche.Storage.S3`) and `MapClaims` (from `Winche.Storage.AspNetCore`) are
+`UseS3Archive` (from `Winche.Storage.S3`) and `MapClaims` (from `Winche.Storage.AspNetCore`) are
 extension methods on `WincheStorageOptions`.
 
 ### `S3ArchiveOptions`
@@ -154,10 +152,10 @@ extension methods on `WincheStorageOptions`.
 | `SecretKey` | `null` | Optional — omit to use ambient credentials |
 | `PresignedUrlExpiry` | `00:15:00` | Lifetime of generated presigned URLs |
 
-You can also configure S3 with a delegate instead of `IConfiguration`:
+Configure S3 with a delegate (bind from `IConfiguration` yourself if you prefer):
 
 ```csharp
-opts.AddS3Archive(s3 =>
+opts.UseS3Archive(s3 =>
 {
     s3.BucketName = "my-bucket";
     s3.RegionName = "eu-west-1";
@@ -195,13 +193,13 @@ app.MapWincheStorageRestApi(prefix: "storage")
 
 Every endpoint runs the built-in `ClaimsAccessor` filter (maps the request to caller claims) and the
 `ExceptionHandler` filter (translates exceptions to status codes), outermost, before the handler
-decodes the base64url path and calls `IFileManager`:
+decodes the base64url path and calls `IFileStorage`:
 
 ```mermaid
 flowchart LR
     Req["HTTP<br/>/files/{base64url}:verb"] --> CA["ClaimsAccessor<br/>SetClaims(HttpContext)"]
     CA --> EH["ExceptionHandler"]
-    EH --> Handler["handler<br/>DecodePath → IFileManager"]
+    EH --> Handler["handler<br/>DecodePath → IFileStorage"]
     Handler --> Ok["Results.Json"]
     EH -. on exception .-> Err["403 AccessDenied<br/>404 NotFound<br/>400 InvalidStatus<br/>500 other"]
 ```
@@ -275,7 +273,7 @@ opts.UseRules(r => r
 
 Storage operations map to rule operations as follows:
 
-| `IFileManager` call | Rule operation |
+| `IFileStorage` call | Rule operation |
 | --- | --- |
 | `SetAsync` | `Create` |
 | `GetAsync`, `GenerateDownloadUrlAsync`, `ListUploadedPartsAsync` | `Get` |
@@ -293,8 +291,8 @@ mutation (a create has no prior `resource`):
 ```mermaid
 sequenceDiagram
     actor Caller
-    participant Guard as RuleGuardedFileManager
-    participant Core as FileManager
+    participant Guard as RuleGuardedFileStorage
+    participant Core as FileStorage
     participant Claims as IRuleClaimsAccessor
     participant Engine as RuleEngine
 
@@ -328,7 +326,7 @@ opts.MapClaims(ctx => new Dictionary<string, object?>
 ```
 
 For non-HTTP callers (background services, tests), inject `FileClaimsAccessor` and call
-`SetClaims(...)` directly before invoking `IFileManager`.
+`SetClaims(...)` directly before invoking `IFileStorage`.
 
 ## Hooks
 
@@ -349,11 +347,11 @@ public class AuditHook : FileStoreHook
 }
 ```
 
-Register: `opts.AddFileStoreHook<AuditHook>()`.
+Register: `opts.AddHook<AuditHook>()`.
 
-## `IFileManager`
+## `IFileStorage`
 
-Inject `IFileManager` directly to interact with the store. The default `IFileManager` is the rules
+Inject `IFileStorage` directly to interact with the store. The default `IFileStorage` is the rules
 guard; protected methods authorize via Winche.Rules, while the `*Unprotected*` variants bypass the
 guard for trusted server-side callers.
 

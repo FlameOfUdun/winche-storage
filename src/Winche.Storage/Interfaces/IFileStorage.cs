@@ -4,7 +4,7 @@ using Winche.Storage.Models;
 
 namespace Winche.Storage.Interfaces;
 
-public interface IFileManager
+public interface IFileStorage
 {
     Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default);
     Task<FileRecord?> GetAsync(string path, CancellationToken ct = default);

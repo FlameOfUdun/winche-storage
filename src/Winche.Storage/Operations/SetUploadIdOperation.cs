@@ -1,15 +1,16 @@
 using Npgsql;
+using Winche.Storage.Constants;
 
 namespace Winche.Storage.Operations;
 
-internal sealed class SetUploadIdOperation(NpgsqlConnection conn, NpgsqlTransaction? tx, string table)
+internal sealed class SetUploadIdOperation(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
     internal async Task ExecuteAsync(string path, string? uploadId, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
-            UPDATE {table}
+            UPDATE {WincheTables.Files}
             SET upload_id = @uploadId
             WHERE path = @path
             """;

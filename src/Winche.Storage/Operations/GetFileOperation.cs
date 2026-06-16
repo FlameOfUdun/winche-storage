@@ -1,10 +1,11 @@
-﻿using Npgsql;
+using Npgsql;
+using Winche.Storage.Constants;
 using Winche.Storage.Infrastructure;
 using Winche.Storage.Models;
 
 namespace Winche.Storage.Operations;
 
-internal sealed class GetFileOperation(NpgsqlConnection conn, NpgsqlTransaction? tx, string table)
+internal sealed class GetFileOperation(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
     internal async Task<FileRecord?> ExecuteAsync(string path, CancellationToken ct)
     {
@@ -12,7 +13,7 @@ internal sealed class GetFileOperation(NpgsqlConnection conn, NpgsqlTransaction?
         cmd.Transaction = tx;
         cmd.CommandText = $"""
             SELECT *
-            FROM {table}
+            FROM {WincheTables.Files}
             WHERE path = @path
             """;
         cmd.Parameters.AddWithValue("path", path);

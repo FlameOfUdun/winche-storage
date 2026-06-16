@@ -1,12 +1,13 @@
 using Npgsql;
 using NpgsqlTypes;
 using System.Text.Json.Nodes;
+using Winche.Storage.Constants;
 using Winche.Storage.Infrastructure;
 using Winche.Storage.Models;
 
 namespace Winche.Storage.Operations;
 
-internal sealed class InsertFileOperation(NpgsqlConnection conn, NpgsqlTransaction? tx, string table)
+internal sealed class InsertFileOperation(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
     internal async Task<FileRecord> ExecuteAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata, CancellationToken ct)
     {
@@ -15,7 +16,7 @@ internal sealed class InsertFileOperation(NpgsqlConnection conn, NpgsqlTransacti
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
-            INSERT INTO {table} (id, directory, path, metadata, mime_type, size_bytes, upload_status, created_at, updated_at, version)
+            INSERT INTO {WincheTables.Files} (id, directory, path, metadata, mime_type, size_bytes, upload_status, created_at, updated_at, version)
             VALUES (@id, @directory, @path, @metadata::jsonb, @mimeType, @sizeBytes, @uploadStatus, NOW(), NOW(), 1)
             ON CONFLICT (path) DO UPDATE SET
                 id         = EXCLUDED.id,
@@ -26,7 +27,7 @@ internal sealed class InsertFileOperation(NpgsqlConnection conn, NpgsqlTransacti
                 size_bytes = EXCLUDED.size_bytes,
                 upload_status = EXCLUDED.upload_status,
                 updated_at = NOW(),
-                version    = {table}.version + 1
+                version    = {WincheTables.Files}.version + 1
             RETURNING *
             """;
 

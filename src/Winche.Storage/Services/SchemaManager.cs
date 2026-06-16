@@ -1,23 +1,18 @@
-﻿using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Winche.Storage.Constants;
-using Winche.Storage.DependencyInjection;
 using Winche.Storage.Interfaces;
 
 namespace Winche.Storage.Services;
 
 public sealed class SchemaManager(
-    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source, 
-    IOptions<WincheStorageOptions> options
+    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source
 ) : ISchemaManager
 {
-    private readonly string tableName = options.Value.TableName;
-
     public async Task EnsureCreatedAsync(CancellationToken ct = default)
     {
         var sql = $$"""
-            CREATE TABLE IF NOT EXISTS {{tableName}} (
+            CREATE TABLE IF NOT EXISTS {{WincheTables.Files}} (
                 id          TEXT        NOT NULL,
                 directory   TEXT        NOT NULL,
                 path        TEXT        PRIMARY KEY,
@@ -30,18 +25,18 @@ public sealed class SchemaManager(
                 upload_status SMALLINT  NOT NULL,
                 upload_id     TEXT       NULL
             );
-            
-            CREATE INDEX IF NOT EXISTS idx_{{tableName}}_directory
-                ON {{tableName}}(directory);
-            
-            CREATE INDEX IF NOT EXISTS idx_{{tableName}}_id
-                ON {{tableName}}(id);
-            
-            CREATE INDEX IF NOT EXISTS idx_{{tableName}}_directory_id
-                ON {{tableName}}(directory, id ASC);
-            
-            CREATE INDEX IF NOT EXISTS idx_{{tableName}}_metadata
-                ON {{tableName}} USING GIN(metadata);
+
+            CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Files}}_directory
+                ON {{WincheTables.Files}}(directory);
+
+            CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Files}}_id
+                ON {{WincheTables.Files}}(id);
+
+            CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Files}}_directory_id
+                ON {{WincheTables.Files}}(directory, id ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Files}}_metadata
+                ON {{WincheTables.Files}} USING GIN(metadata);
             """;
 
         await using var conn = await source.OpenConnectionAsync(ct);

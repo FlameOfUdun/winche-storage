@@ -1,5 +1,4 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 using Npgsql;
 using Winche.Rules;
 using Winche.Rules.DependencyInjection;
@@ -17,9 +16,8 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         Action<WincheStorageOptions> configure)
     {
-        // Register defaults BEFORE the lambda so later registrations win (last-registered singleton):
-        //   - null claims fallback  → overridden by MapClaims()
-        //   - NullArchive default   → overridden by AddS3Archive()
+        // Defaults registered BEFORE configure so user overrides (MapClaims/UseS3Archive) win
+        // (.NET DI returns the last-registered singleton).
         services.AddSingleton<IRuleClaimsAccessor>(NullRuleClaimsAccessor.Instance);
         services.AddSingleton<IArchive, NullArchive>();
 
@@ -31,26 +29,25 @@ public static class ServiceCollectionExtensions
             : throw new InvalidOperationException(
                 $"{nameof(WincheStorageOptions)}.{nameof(WincheStorageOptions.ConnectionString)} is required.");
 
-        services.AddSingleton<IOptions<WincheStorageOptions>>(Options.Create(options));
-
         services.AddNpgsqlDataSource(connectionString, serviceKey: ServiceKeys.DATA_SOURCE_KEY);
 
+        // Schema + hooks
+        services.AddSingleton<ISchemaManager, SchemaManager>();
         services.AddSingleton<HookInvocationDispatcher>();
         services.AddHostedService<HookInvocationProcessor>();
-        services.AddSingleton<ISchemaManager, SchemaManager>();
 
-        // Winche.Rules engine: merges every RuleSet from UseRules() plus this deny-all seed.
+        // Winche.Rules guard: merges every RuleSet from UseRules() plus this deny-all seed.
         services.AddWincheRules(o => o.WithRuleset(_ => { }));
 
-        // Unguarded core, then the authorize-then-delegate guard as the public IFileManager.
-        services.AddSingleton<FileManager>();
-        services.AddSingleton<RuleGuardedFileManager>(sp =>
-            new RuleGuardedFileManager(
-                sp.GetRequiredService<FileManager>(),
+        // Unguarded core, then the authorize-then-delegate guard as the public IFileStorage.
+        services.AddSingleton<FileStorage>();
+        services.AddSingleton<RuleGuardedFileStorage>(sp =>
+            new RuleGuardedFileStorage(
+                sp.GetRequiredService<FileStorage>(),
                 sp.GetRequiredService<RuleEngine>(),
                 () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims()));
-        services.AddSingleton<IFileManager>(sp =>
-            sp.GetRequiredService<RuleGuardedFileManager>());
+        services.AddSingleton<IFileStorage>(sp =>
+            sp.GetRequiredService<RuleGuardedFileStorage>());
 
         return services;
     }

@@ -7,15 +7,15 @@ using Winche.Storage.Models;
 namespace Winche.Storage.Authorization;
 
 /// <summary>
-/// <see cref="RuleEngine"/>-based authorization decorator over the unguarded <see cref="IFileManager"/> core.
-/// Protected operations authorize via the engine before delegating to the inner manager's unprotected counterparts.
+/// <see cref="RuleEngine"/>-based authorization decorator over the unguarded <see cref="IFileStorage"/> core.
+/// Protected operations authorize via the engine before delegating to the inner storage's unprotected counterparts.
 /// Unprotected operations delegate directly, bypassing the rules engine.
 /// </summary>
-public sealed class RuleGuardedFileManager(
-    IFileManager inner,
+public sealed class RuleGuardedFileStorage(
+    IFileStorage inner,
     RuleEngine engine,
     Func<IReadOnlyDictionary<string, object?>?> claimsProvider)
-    : IFileManager
+    : IFileStorage
 {
     // ── Protected operations ──────────────────────────────────────────────────
 

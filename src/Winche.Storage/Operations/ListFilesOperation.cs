@@ -1,10 +1,11 @@
 using Npgsql;
+using Winche.Storage.Constants;
 using Winche.Storage.Infrastructure;
 using Winche.Storage.Models;
 
 namespace Winche.Storage.Operations;
 
-internal sealed class ListFilesOperation(NpgsqlConnection conn, NpgsqlTransaction? tx, string tableName)
+internal sealed class ListFilesOperation(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
     public async Task<IEnumerable<FileRecord>> ExecuteAsync(string directory, string? mimeType, CancellationToken ct)
     {
@@ -12,7 +13,7 @@ internal sealed class ListFilesOperation(NpgsqlConnection conn, NpgsqlTransactio
 
         var sql = $"""
             SELECT *
-            FROM "{tableName}"
+            FROM {WincheTables.Files}
             WHERE directory = @directory AND {condition}
             ORDER BY path
             """;

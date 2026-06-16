@@ -1,24 +1,19 @@
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 using Npgsql;
 using System.Text.Json.Nodes;
 using Winche.Storage.Constants;
 using Winche.Storage.Interfaces;
-using Winche.Storage.DependencyInjection;
 using Winche.Storage.Models;
 using Winche.Storage.Operations;
 
 namespace Winche.Storage.Services;
 
-public sealed class FileManager(
+public sealed class FileStorage(
     [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
-    IOptions<WincheStorageOptions> options,
     IArchive archive,
     HookInvocationDispatcher hookDispatcher
-) : IFileManager
+) : IFileStorage
 {
-    private readonly string tableName = options.Value.TableName;
-
     public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default) =>
         SetUnprotectedAsync(path, mimeType, sizeBytes, metadata, ct);
 
@@ -58,7 +53,7 @@ public sealed class FileManager(
 
             var uploadId = await archive.CreateMultipartUploadAsync(path, file.MimeType, ct);
             await using var conn = await source.OpenConnectionAsync(ct);
-            await new SetUploadIdOperation(conn, null, tableName).ExecuteAsync(path, uploadId, ct);
+            await new SetUploadIdOperation(conn, null).ExecuteAsync(path, uploadId, ct);
             return await archive.SignPartAsync(path, uploadId, partNumber, ct);
         }
 
@@ -79,7 +74,7 @@ public sealed class FileManager(
     public async Task<FileRecord> SetUnprotectedAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        var record = await new InsertFileOperation(conn, null, tableName).ExecuteAsync(path, mimeType, sizeBytes, metadata, ct);
+        var record = await new InsertFileOperation(conn, null).ExecuteAsync(path, mimeType, sizeBytes, metadata, ct);
         hookDispatcher.Enqueue(path, (h, t) => h.OnFileRegisteredAsync(record, t));
         return record;
     }
@@ -87,13 +82,13 @@ public sealed class FileManager(
     public async Task<FileRecord?> GetUnprotectedAsync(string path, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        return await new GetFileOperation(conn, null, tableName).ExecuteAsync(path, ct);
+        return await new GetFileOperation(conn, null).ExecuteAsync(path, ct);
     }
 
     public async Task<FileRecord?> UpdateUnprotectedAsync(string path, JsonObject patch, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        var record = await new UpdateMetadataOperation(conn, null, tableName).ExecuteAsync(path, patch, ct);
+        var record = await new UpdateMetadataOperation(conn, null).ExecuteAsync(path, patch, ct);
         if (record is not null) hookDispatcher.Enqueue(path, (h, t) => h.OnMetadataUpdatedAsync(record, t));
         return record;
     }
@@ -105,7 +100,7 @@ public sealed class FileManager(
 
         try
         {
-            var op = new DeleteFileOperation(conn, tx, tableName);
+            var op = new DeleteFileOperation(conn, tx);
 
             var candidates = await op.SelectForUpdateAsync(path, ct);
             var deleted = await op.ExecuteAsync(path, ct);
@@ -145,7 +140,7 @@ public sealed class FileManager(
         {
             await archive.AbortMultipartUploadAsync(path, file.UploadId, ct);
             await using var conn = await source.OpenConnectionAsync(ct);
-            await new SetUploadIdOperation(conn, null, tableName).ExecuteAsync(path, null, ct);
+            await new SetUploadIdOperation(conn, null).ExecuteAsync(path, null, ct);
         }
 
         var session = await archive.GenerateUploadUrlAsync(file.Path, file.MimeType, file.SizeBytes, ct);
@@ -178,7 +173,7 @@ public sealed class FileManager(
         {
             await archive.CompleteMultipartUploadAsync(path, file.UploadId, ct);
             await using var conn1 = await source.OpenConnectionAsync(ct);
-            await new SetUploadIdOperation(conn1, null, tableName).ExecuteAsync(path, null, ct);
+            await new SetUploadIdOperation(conn1, null).ExecuteAsync(path, null, ct);
         }
         else
         {
@@ -188,7 +183,7 @@ public sealed class FileManager(
         }
 
         await using var conn = await source.OpenConnectionAsync(ct);
-        var record = await new ConfirmUploadOperation(conn, null, tableName).ExecuteAsync(path, ct)
+        var record = await new ConfirmUploadOperation(conn, null).ExecuteAsync(path, ct)
             ?? throw new FileRecordNotFoundException(path);
         hookDispatcher.Enqueue(path, (h, t) => h.OnUploadConfirmedAsync(record, t));
         return record;
@@ -197,6 +192,6 @@ public sealed class FileManager(
     public async Task<IEnumerable<FileRecord>> ListUnprotectedAsync(string directory, string? mimeType = null, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
-        return await new ListFilesOperation(conn, null, tableName).ExecuteAsync(directory, mimeType, ct);
+        return await new ListFilesOperation(conn, null).ExecuteAsync(directory, mimeType, ct);
     }
 }

@@ -1,22 +1,23 @@
-﻿using Npgsql;
+using Npgsql;
 using NpgsqlTypes;
 using System.Text.Json.Nodes;
+using Winche.Storage.Constants;
 using Winche.Storage.Infrastructure;
 using Winche.Storage.Models;
 
 namespace Winche.Storage.Operations;
 
-internal sealed class UpdateMetadataOperation(NpgsqlConnection conn, NpgsqlTransaction? tx, string table)
+internal sealed class UpdateMetadataOperation(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
     internal async Task<FileRecord?> ExecuteAsync(string path, JsonObject metadata, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
-            UPDATE {table}
+            UPDATE {WincheTables.Files}
             SET metadata   = @metadata::jsonb,
                 updated_at = NOW(),
-                version    = {table}.version + 1
+                version    = {WincheTables.Files}.version + 1
             WHERE path = @path
             RETURNING *
             """;

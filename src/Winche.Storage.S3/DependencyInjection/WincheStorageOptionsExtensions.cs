@@ -1,6 +1,5 @@
 using Amazon;
 using Amazon.S3;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Winche.Storage.DependencyInjection;
@@ -12,14 +11,7 @@ namespace Winche.Storage.S3.DependencyInjection;
 
 public static class WincheStorageOptionsExtensions
 {
-    public static WincheStorageOptions AddS3Archive(this WincheStorageOptions options, IConfiguration configuration)
-    {
-        options.Services.Configure<S3ArchiveOptions>(configuration.GetSection("WincheStorage:S3Archive"));
-        RegisterS3ArchiveServices(options.Services);
-        return options;
-    }
-
-    public static WincheStorageOptions AddS3Archive(this WincheStorageOptions options, Action<S3ArchiveOptions> configure)
+    public static WincheStorageOptions UseS3Archive(this WincheStorageOptions options, Action<S3ArchiveOptions> configure)
     {
         options.Services.Configure(configure);
         RegisterS3ArchiveServices(options.Services);

@@ -6,7 +6,7 @@ namespace Winche.Storage.Archives;
 internal sealed class NullArchive : IArchive
 {
     private static InvalidOperationException Missing() =>
-        new("No IArchive has been registered. Call AddS3Archive() or register a custom IArchive implementation.");
+        new("No IArchive has been registered. Call UseS3Archive() or register a custom IArchive implementation.");
 
     public Task<UploadSession> GenerateUploadUrlAsync(string path, string mimeType, long sizeBytes, CancellationToken ct = default) => throw Missing();
     public Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default) => throw Missing();

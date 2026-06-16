@@ -5,10 +5,11 @@ using Winche.Storage.Abstraction;
 namespace Winche.Storage.DependencyInjection;
 
 /// <summary>
-/// The single options surface for Winche.Storage: connection, store behavior, and component
-/// registrations (rules, hooks). Configured through the <c>AddWincheStorage</c> lambda and consumed
-/// at runtime via <c>IOptions&lt;WincheStorageOptions&gt;</c>. Satellite packages extend this type
-/// (e.g. <c>AddS3Archive</c>, <c>MapClaims</c>) through <see cref="Services"/>.
+/// The single options surface for Winche.Storage: connection and component registrations
+/// (rules, hooks). Configured through the <c>AddWincheStorage</c> lambda; its values are applied
+/// at registration time — the connection string is read directly and the registrations it performs
+/// go through <see cref="Services"/>. Satellite packages extend this type (e.g. <c>UseS3Archive</c>,
+/// <c>MapClaims</c>) through <see cref="Services"/>.
 /// </summary>
 public sealed class WincheStorageOptions
 {
@@ -29,9 +30,6 @@ public sealed class WincheStorageOptions
     /// </summary>
     public string? ConnectionString { get; set; }
 
-    /// <summary>Table name for file metadata. Defaults to "files".</summary>
-    public string TableName { get; set; } = "files";
-
     /// <summary>
     /// Adds a <see cref="RuleSet"/> to the Winche.Rules guard. Multiple calls accumulate — each
     /// ruleset's blocks are OR-combined. With no <c>UseRules</c> call, access is default-deny.
@@ -49,7 +47,7 @@ public sealed class WincheStorageOptions
         return this;
     }
 
-    public WincheStorageOptions AddFileStoreHook<THook>() where THook : FileStoreHook
+    public WincheStorageOptions AddHook<THook>() where THook : FileStoreHook
     {
         Services.AddSingleton<FileStoreHook, THook>();
         return this;

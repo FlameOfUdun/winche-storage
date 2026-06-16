@@ -1,4 +1,5 @@
 using Npgsql;
+using Winche.Storage.Constants;
 using Winche.Storage.Infrastructure;
 using Winche.Storage.Models;
 
@@ -6,7 +7,7 @@ namespace Winche.Storage.Operations;
 
 internal sealed record FileDeleteCandidate(string Path, string? UploadId, UploadStatus UploadStatus);
 
-internal sealed class DeleteFileOperation(NpgsqlConnection conn, NpgsqlTransaction? tx, string table)
+internal sealed class DeleteFileOperation(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
     internal async Task<IReadOnlyList<FileDeleteCandidate>> SelectForUpdateAsync(string path, CancellationToken ct)
     {
@@ -17,7 +18,7 @@ internal sealed class DeleteFileOperation(NpgsqlConnection conn, NpgsqlTransacti
         cmd.Transaction = tx;
         cmd.CommandText = $"""
             SELECT path, upload_id, upload_status
-            FROM {table}
+            FROM {WincheTables.Files}
             WHERE path = @path OR path LIKE @prefix ESCAPE '\'
             FOR UPDATE
             """;
@@ -44,7 +45,7 @@ internal sealed class DeleteFileOperation(NpgsqlConnection conn, NpgsqlTransacti
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
-            DELETE FROM {table}
+            DELETE FROM {WincheTables.Files}
             WHERE path = @path OR path LIKE @prefix ESCAPE '\'
             RETURNING path
             """;
