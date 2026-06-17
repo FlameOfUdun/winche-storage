@@ -8,4 +8,7 @@
   <Folder Name="/samples/">
     <Project Path="samples/Winche.Storage.Sample/Winche.Storage.Sample.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Winche.Storage.Tests/Winche.Storage.Tests.csproj" />
+  </Folder>
 </Solution>

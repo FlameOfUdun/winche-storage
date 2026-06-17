@@ -16,12 +16,4 @@ public interface IFileStorage
     Task<IEnumerable<FileRecord>> ListAsync(string directory, string? mimeType = null, CancellationToken ct = default);
     Task<UploadSession> SignPartAsync(string path, int partNumber, CancellationToken ct = default);
     Task<IEnumerable<FilePart>> ListUploadedPartsAsync(string path, CancellationToken ct = default);
-    Task<FileRecord> SetUnprotectedAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default);
-    Task<FileRecord?> GetUnprotectedAsync(string path, CancellationToken ct = default);
-    Task<FileRecord?> UpdateUnprotectedAsync(string path, JsonObject patch, CancellationToken ct = default);
-    Task<bool> DeleteUnprotectedAsync(string path, CancellationToken ct = default);
-    Task<UploadSession> GenerateUploadUrlUnprotectedAsync(string path, CancellationToken ct = default);
-    Task<DownloadSession> GenerateDownloadUrlUnprotectedAsync(string path, CancellationToken ct = default);
-    Task<FileRecord> ConfirmUploadUnprotectedAsync(string path, CancellationToken ct = default);
-    Task<IEnumerable<FileRecord>> ListUnprotectedAsync(string directory, string? mimeType = null, CancellationToken ct = default);
 }

@@ -39,7 +39,8 @@ public static class ServiceCollectionExtensions
         // Winche.Rules guard: merges every RuleSet from UseRules() plus this deny-all seed.
         services.AddWincheRules(o => o.WithRuleset(_ => { }));
 
-        // Unguarded core, then the authorize-then-delegate guard as the public IFileStorage.
+        // Guarded-by-default: IFileStorage resolves to the rules guard. The concrete FileStorage is the
+        // unguarded core — inject it directly for trusted server-side callers that have no caller claims.
         services.AddSingleton<FileStorage>();
         services.AddSingleton<RuleGuardedFileStorage>(sp =>
             new RuleGuardedFileStorage(

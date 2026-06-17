@@ -297,7 +297,7 @@ sequenceDiagram
     participant Engine as RuleEngine
 
     Caller->>Guard: GetAsync(path)
-    Guard->>Core: GetUnprotectedAsync(path)
+    Guard->>Core: GetAsync(path)
     Core-->>Guard: FileRecord (resource)
     Guard->>Claims: GetClaims()
     Claims-->>Guard: caller claims
@@ -352,12 +352,14 @@ Register: `opts.UseHooks(h => h.Add<AuditHook>("userFiles/{userId}/{file=**}"))`
 
 ## `IFileStorage`
 
-Inject `IFileStorage` directly to interact with the store. The default `IFileStorage` is the rules
-guard; protected methods authorize via Winche.Rules, while the `*Unprotected*` variants bypass the
-guard for trusted server-side callers.
+Inject `IFileStorage` to interact with the store — it always resolves to the rules guard, which
+authorizes every call via Winche.Rules. Trusted server-side callers that have no request claims
+(background services, hooks, schedulers) should inject the concrete `FileStorage` instead, which is
+the unguarded core. This mirrors Winche.Database's `IDocumentDatabase` (guarded) vs `DocumentDatabase`
+(unguarded) split.
 
 ```csharp
-// Protected variants — rules are enforced
+// IFileStorage — every call is authorized via Winche.Rules
 Task<FileRecord>               SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata, CancellationToken ct);
 Task<FileRecord?>              GetAsync(string path, CancellationToken ct);
 Task<FileRecord?>              UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct);
@@ -368,11 +370,16 @@ Task<FileRecord>               ConfirmUploadAsync(string path, CancellationToken
 Task<IEnumerable<FileRecord>>  ListAsync(string directory, string? mimeType, CancellationToken ct);
 Task<UploadSession>            SignPartAsync(string path, int partNumber, CancellationToken ct);
 Task<IEnumerable<FilePart>>    ListUploadedPartsAsync(string path, CancellationToken ct);
+```
 
-// Unprotected variants — bypass rules (for server-side / trusted callers)
-Task<FileRecord>               SetUnprotectedAsync(...)
-Task<FileRecord?>              GetUnprotectedAsync(...)
-// ... same surface, Unprotected suffix
+For trusted, claim-less callers, inject the concrete core — same surface, no authorization:
+
+```csharp
+public sealed class ReportMailer(FileStorage files)   // concrete FileStorage = unguarded
+{
+    public Task<DownloadSession> LinkAsync(string path, CancellationToken ct) =>
+        files.GenerateDownloadUrlAsync(path, ct);
+}
 ```
 
 ### `FileRecord`

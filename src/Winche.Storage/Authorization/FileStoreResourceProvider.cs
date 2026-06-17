@@ -11,13 +11,13 @@ internal sealed class FileStoreResourceProvider(IFileStorage inner) : IRuleResou
 {
     public async Task<bool> ExistsAsync(string path, CancellationToken ct = default)
     {
-        var file = await inner.GetUnprotectedAsync(path, ct);
+        var file = await inner.GetAsync(path, ct);
         return file is not null;
     }
 
     public async Task<RuleValue> GetAsync(string path, CancellationToken ct = default)
     {
-        var file = await inner.GetUnprotectedAsync(path, ct);
+        var file = await inner.GetAsync(path, ct);
         return file is not null ? FileToResource.Convert(file) : RuleValue.Null;
     }
 }

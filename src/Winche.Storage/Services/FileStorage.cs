@@ -14,64 +14,7 @@ public sealed class FileStorage(
     HookInvocationDispatcher hookDispatcher
 ) : IFileStorage
 {
-    public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default) =>
-        SetUnprotectedAsync(path, mimeType, sizeBytes, metadata, ct);
-
-    public Task<FileRecord?> GetAsync(string path, CancellationToken ct = default) =>
-        GetUnprotectedAsync(path, ct);
-
-    public Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct = default) =>
-        UpdateUnprotectedAsync(path, patch, ct);
-
-    public Task<bool> DeleteAsync(string path, CancellationToken ct = default) =>
-        DeleteUnprotectedAsync(path, ct);
-
-    public Task<UploadSession> GenerateUploadUrlAsync(string path, CancellationToken ct = default) =>
-        GenerateUploadUrlUnprotectedAsync(path, ct);
-
-    public Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default) =>
-        GenerateDownloadUrlUnprotectedAsync(path, ct);
-
-    public Task<FileRecord> ConfirmUploadAsync(string path, CancellationToken ct = default) =>
-        ConfirmUploadUnprotectedAsync(path, ct);
-
-    public Task<IEnumerable<FileRecord>> ListAsync(string directory, string? mimeType = null, CancellationToken ct = default) =>
-        ListUnprotectedAsync(directory, mimeType, ct);
-
-    public async Task<UploadSession> SignPartAsync(string path, int partNumber, CancellationToken ct = default)
-    {
-        var file = await GetUnprotectedAsync(path, ct)
-            ?? throw new FileRecordNotFoundException(path);
-
-        if (file.UploadStatus != UploadStatus.Pending)
-            throw new InvalidUploadStatusException(path, UploadStatus.Pending, file.UploadStatus);
-
-        if (file.UploadId is null)
-        {
-            if (partNumber != 1)
-                throw new InvalidOperationException($"No active multipart upload for '{path}'. Start from part 1.");
-
-            var uploadId = await archive.CreateMultipartUploadAsync(path, file.MimeType, ct);
-            await using var conn = await source.OpenConnectionAsync(ct);
-            await new SetUploadIdOperation(conn, null).ExecuteAsync(path, uploadId, ct);
-            return await archive.SignPartAsync(path, uploadId, partNumber, ct);
-        }
-
-        return await archive.SignPartAsync(path, file.UploadId, partNumber, ct);
-    }
-
-    public async Task<IEnumerable<FilePart>> ListUploadedPartsAsync(string path, CancellationToken ct = default)
-    {
-        var file = await GetUnprotectedAsync(path, ct)
-            ?? throw new FileRecordNotFoundException(path);
-
-        if (file.UploadId is null)
-            return [];
-
-        return await archive.ListPartsAsync(path, file.UploadId, ct);
-    }
-
-    public async Task<FileRecord> SetUnprotectedAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default)
+    public async Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         var record = await new InsertFileOperation(conn, null).ExecuteAsync(path, mimeType, sizeBytes, metadata, ct);
@@ -79,13 +22,13 @@ public sealed class FileStorage(
         return record;
     }
 
-    public async Task<FileRecord?> GetUnprotectedAsync(string path, CancellationToken ct = default)
+    public async Task<FileRecord?> GetAsync(string path, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         return await new GetFileOperation(conn, null).ExecuteAsync(path, ct);
     }
 
-    public async Task<FileRecord?> UpdateUnprotectedAsync(string path, JsonObject patch, CancellationToken ct = default)
+    public async Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         var record = await new UpdateMetadataOperation(conn, null).ExecuteAsync(path, patch, ct);
@@ -93,7 +36,7 @@ public sealed class FileStorage(
         return record;
     }
 
-    public async Task<bool> DeleteUnprotectedAsync(string path, CancellationToken ct = default)
+    public async Task<bool> DeleteAsync(string path, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
@@ -128,9 +71,9 @@ public sealed class FileStorage(
         }
     }
 
-    public async Task<UploadSession> GenerateUploadUrlUnprotectedAsync(string path, CancellationToken ct = default)
+    public async Task<UploadSession> GenerateUploadUrlAsync(string path, CancellationToken ct = default)
     {
-        var file = await GetUnprotectedAsync(path, ct)
+        var file = await GetAsync(path, ct)
             ?? throw new FileRecordNotFoundException(path);
 
         if (file.UploadStatus != UploadStatus.Pending)
@@ -148,9 +91,9 @@ public sealed class FileStorage(
         return session;
     }
 
-    public async Task<DownloadSession> GenerateDownloadUrlUnprotectedAsync(string path, CancellationToken ct = default)
+    public async Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default)
     {
-        var file = await GetUnprotectedAsync(path, ct)
+        var file = await GetAsync(path, ct)
             ?? throw new FileRecordNotFoundException("File not found");
 
         if (file.UploadStatus != UploadStatus.Complete)
@@ -161,9 +104,9 @@ public sealed class FileStorage(
         return session;
     }
 
-    public async Task<FileRecord> ConfirmUploadUnprotectedAsync(string path, CancellationToken ct = default)
+    public async Task<FileRecord> ConfirmUploadAsync(string path, CancellationToken ct = default)
     {
-        var file = await GetUnprotectedAsync(path, ct)
+        var file = await GetAsync(path, ct)
             ?? throw new FileRecordNotFoundException("File not found");
 
         if (file.UploadStatus != UploadStatus.Pending)
@@ -189,9 +132,42 @@ public sealed class FileStorage(
         return record;
     }
 
-    public async Task<IEnumerable<FileRecord>> ListUnprotectedAsync(string directory, string? mimeType = null, CancellationToken ct = default)
+    public async Task<IEnumerable<FileRecord>> ListAsync(string directory, string? mimeType = null, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);
         return await new ListFilesOperation(conn, null).ExecuteAsync(directory, mimeType, ct);
+    }
+
+    public async Task<UploadSession> SignPartAsync(string path, int partNumber, CancellationToken ct = default)
+    {
+        var file = await GetAsync(path, ct)
+            ?? throw new FileRecordNotFoundException(path);
+
+        if (file.UploadStatus != UploadStatus.Pending)
+            throw new InvalidUploadStatusException(path, UploadStatus.Pending, file.UploadStatus);
+
+        if (file.UploadId is null)
+        {
+            if (partNumber != 1)
+                throw new InvalidOperationException($"No active multipart upload for '{path}'. Start from part 1.");
+
+            var uploadId = await archive.CreateMultipartUploadAsync(path, file.MimeType, ct);
+            await using var conn = await source.OpenConnectionAsync(ct);
+            await new SetUploadIdOperation(conn, null).ExecuteAsync(path, uploadId, ct);
+            return await archive.SignPartAsync(path, uploadId, partNumber, ct);
+        }
+
+        return await archive.SignPartAsync(path, file.UploadId, partNumber, ct);
+    }
+
+    public async Task<IEnumerable<FilePart>> ListUploadedPartsAsync(string path, CancellationToken ct = default)
+    {
+        var file = await GetAsync(path, ct)
+            ?? throw new FileRecordNotFoundException(path);
+
+        if (file.UploadId is null)
+            return [];
+
+        return await archive.ListPartsAsync(path, file.UploadId, ct);
     }
 }
