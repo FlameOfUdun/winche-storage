@@ -2,10 +2,13 @@ using Winche.Storage.Models;
 
 namespace Winche.Storage.Abstraction;
 
+/// <summary>
+/// A file lifecycle hook. The path pattern selecting which files fire this hook is supplied at
+/// registration time (<see cref="DependencyInjection.HookBuilder.Add{THook}(string)"/>), not on the
+/// hook — so the same hook behavior can be bound to different paths.
+/// </summary>
 public abstract class FileStoreHook
 {
-    public abstract string Path { get; }
-
     public virtual Task OnFileRegisteredAsync(FileRecord record, CancellationToken ct) => Task.CompletedTask;
     public virtual Task OnUploadConfirmedAsync(FileRecord record, CancellationToken ct) => Task.CompletedTask;
     public virtual Task OnFileDeletedAsync(string path, CancellationToken ct) => Task.CompletedTask;

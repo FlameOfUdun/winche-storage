@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Winche.Rules;
 using Winche.Storage.Abstraction;
 
@@ -47,9 +48,41 @@ public sealed class WincheStorageOptions
         return this;
     }
 
-    public WincheStorageOptions AddHook<THook>() where THook : FileStoreHook
+    /// <summary>
+    /// Registers file lifecycle hooks via a fluent builder, binding each hook to a Firestore-style
+    /// path pattern at registration time. Multiple calls accumulate — each binding is registered as a
+    /// singleton so that <c>GetServices&lt;HookRegistration&gt;()</c> returns them all at startup.
+    /// </summary>
+    public WincheStorageOptions UseHooks(Action<HookBuilder> configure)
     {
-        Services.AddSingleton<FileStoreHook, THook>();
+        var builder = new HookBuilder(Services);
+        configure(builder);
+        return this;
+    }
+}
+
+/// <summary>
+/// Fluent builder used inside <see cref="WincheStorageOptions.UseHooks(Action{HookBuilder})"/>.
+/// Each <see cref="Add{THook}(string)"/> registers one <see cref="Abstraction.HookRegistration"/> as a
+/// singleton so that <c>GetServices&lt;HookRegistration&gt;()</c> returns them all at startup.
+/// </summary>
+public sealed class HookBuilder(IServiceCollection services)
+{
+    /// <summary>
+    /// Registers a hook <typeparamref name="THook"/> (constructed via DI, so constructor injection
+    /// works) bound to <paramref name="path"/>. The same hook type may be bound to multiple paths.
+    /// </summary>
+    public HookBuilder Add<THook>(string path) where THook : Abstraction.FileStoreHook
+    {
+        services.TryAddSingleton<THook>();
+        services.AddSingleton(sp => new Abstraction.HookRegistration(path, sp.GetRequiredService<THook>()));
+        return this;
+    }
+
+    /// <summary>Registers a pre-constructed <paramref name="hook"/> instance bound to <paramref name="path"/>.</summary>
+    public HookBuilder Add(string path, Abstraction.FileStoreHook hook)
+    {
+        services.AddSingleton(new Abstraction.HookRegistration(path, hook));
         return this;
     }
 }

@@ -18,7 +18,7 @@ builder.Services.AddWincheStorage(opts =>
     opts.UseRules(r => r.Match("userFiles/{userId}/{rest=**}", owned =>
         owned.Allow(RuleOperations.All, Expr.Auth("token", "userId").Eq(Expr.Param("userId")))));
 
-    opts.AddHook<FileUpdateHook>();
+    opts.UseHooks(h => h.Add<FileUpdateHook>("userFiles/{userId}/{file=**}"));
     opts.UseS3Archive(s3 => builder.Configuration.GetSection("WincheStorage:S3Archive").Bind(s3));
     opts.MapClaims(ctx => new Dictionary<string, object?>
     {

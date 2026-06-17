@@ -5,8 +5,6 @@ namespace Winche.Storage.Sample.Configurations;
 
 public class FileUpdateHook : FileStoreHook
 {
-    public override string Path => "userFiles/{userId}/**";
-
     public override Task OnFileRegisteredAsync(FileRecord record, CancellationToken ct)
     {
         Console.WriteLine($"File registered: {record.Path}");

@@ -125,7 +125,7 @@ services.AddWincheStorage(opts =>
 {
     opts.ConnectionString = "Host=...;Database=...;Username=...;Password=...";
     opts.UseRules(/* ... */);
-    opts.AddHook<AuditHook>();
+    opts.UseHooks(h => h.Add<AuditHook>("userFiles/{userId}/{file=**}"));
     opts.UseS3Archive(/* Action<S3ArchiveOptions> */);
     opts.MapClaims(/* Func<HttpContext, IReadOnlyDictionary<string, object?>?> */);
 });
@@ -137,7 +137,7 @@ services.AddWincheStorage(opts =>
 | --- | --- |
 | `ConnectionString` | _(required)_ Postgres connection string. Schema comes from its `Search Path`. |
 | `UseRules(...)` | Adds a `RuleSet` to the guard. Multiple calls accumulate (OR-combined). |
-| `AddHook<T>()` | Registers a `FileStoreHook` lifecycle listener. |
+| `UseHooks(h => h.Add<T>(path))` | Registers `FileStoreHook` lifecycle listeners, each bound to a Firestore-style path pattern. |
 
 `UseS3Archive` (from `Winche.Storage.S3`) and `MapClaims` (from `Winche.Storage.AspNetCore`) are
 extension methods on `WincheStorageOptions`.
@@ -330,14 +330,15 @@ For non-HTTP callers (background services, tests), inject `FileClaimsAccessor` a
 
 ## Hooks
 
-Implement `FileStoreHook` to react to file lifecycle events. Hooks are matched by `Path` (the same
-pattern syntax as rules) and dispatched asynchronously.
+Implement `FileStoreHook` (behavior only) and register it against a path with
+`UseHooks(h => h.Add<T>(path))`. The path is a Firestore-style pattern (literal segments, `{id}`
+single-segment captures, and a trailing `{name=**}` recursive wildcard matching **one or more**
+segments; bare `*`/`**` are not valid). The same hook type can be bound to multiple paths. Hooks are
+dispatched asynchronously.
 
 ```csharp
 public class AuditHook : FileStoreHook
 {
-    public override string Path => "userFiles/{userId}/**";
-
     public override Task OnFileRegisteredAsync(FileRecord record, CancellationToken ct) { ... }
     public override Task OnUploadConfirmedAsync(FileRecord record, CancellationToken ct) { ... }
     public override Task OnFileDeletedAsync(string path, CancellationToken ct) { ... }
@@ -347,7 +348,7 @@ public class AuditHook : FileStoreHook
 }
 ```
 
-Register: `opts.AddHook<AuditHook>()`.
+Register: `opts.UseHooks(h => h.Add<AuditHook>("userFiles/{userId}/{file=**}"))`.
 
 ## `IFileStorage`
 
