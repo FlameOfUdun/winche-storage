@@ -40,25 +40,33 @@ So the only real fix is isolating `RuleEngine` + the `RuleSet` pool.
 
 ## Goal
 
-Each package builds its **own** `RuleEngine` from **only its own** rulesets, and its guards use
-that engine. `RuleEngine` and `RuleSet` are no longer placed in the shared DI container at all, so
-cross-wiring is structurally impossible.
+Each package builds its **own** `RuleEngine` from **only its own** rulesets, registers it under a
+**package-specific service key**, and its guards resolve it by that key. No package shares the
+other's engine, and the engine remains resolvable from DI (for diagnostics / future consumers)
+— without changing `Winche.Rules`.
 
-## Design: build-and-inject locally
+## Design: per-package keyed engine
 
 For **each** package (`WincheDatabase`, `WincheStorage`):
 
 1. **Accumulate rulesets on the options object.** Add `internal List<RuleSet> Rulesets { get; } = [];`
    to `WincheDatabaseOptions` / `WincheStorageOptions`. Change both `UseRules(...)` overloads to
-   `Rulesets.Add(ruleset)` instead of `Services.AddSingleton(ruleset)`.
+   `Rulesets.Add(ruleset)` instead of `Services.AddSingleton(ruleset)`. Rulesets stay out of the
+   DI container entirely.
 
-2. **Stop calling `AddWincheRules(...)`.** Remove it from each package's
+2. **Add a rule-engine service key.** Add a constant to each package's `ServiceKeys`, e.g.
+   `public const string RULE_ENGINE_KEY = "WincheDatabase";` / `"WincheStorage"`. (A dedicated
+   constant is used for clarity; reusing `DATA_SOURCE_KEY` would also be legal since keyed DI keys
+   are scoped per service type, but a separate name documents intent.)
+
+3. **Stop calling `AddWincheRules(...)`.** Remove it from each package's
    `ServiceCollectionExtensions`.
 
-3. **Build the engine once, after `configure(options)`** runs:
+4. **Build the engine once, after `configure(options)`** runs, and register it keyed:
 
    ```csharp
    var ruleEngine = new RuleEngine(RuleSet.Merge(options.Rulesets), WincheRuleValueComparer.Instance);
+   services.AddKeyedSingleton(ServiceKeys.RULE_ENGINE_KEY, ruleEngine);
    ```
 
    - Both packages use `WincheRuleValueComparer.Instance` (Storage matches Database, preserving
@@ -66,8 +74,8 @@ For **each** package (`WincheDatabase`, `WincheStorage`):
    - Empty `Rulesets` → `RuleSet.Merge([])` is empty → default-deny. The old explicit "deny-all
      seed" is no longer needed.
 
-4. **Inject the instance directly into the guard registrations**, replacing
-   `sp.GetRequiredService<RuleEngine>()` with the captured `ruleEngine` local:
+5. **Resolve the keyed engine in the guard registrations**, replacing
+   `sp.GetRequiredService<RuleEngine>()` with `sp.GetRequiredKeyedService<RuleEngine>(ServiceKeys.RULE_ENGINE_KEY)`:
    - Database: `RulesWriteAuthorizer`, `RuleGuardedDocumentDatabase`.
    - Storage: `RuleGuardedFileStorage`.
 
@@ -76,27 +84,33 @@ For **each** package (`WincheDatabase`, `WincheStorage`):
 ## Files changed
 
 **WincheDatabase**
+- `src/Winche.Database/Constants/ServiceKeys.cs` — add `RULE_ENGINE_KEY`.
 - `src/Winche.Database/DependencyInjection/WincheDatabaseOptions.cs` — add `Rulesets`; both
   `UseRules` overloads append to it.
 - `src/Winche.Database/DependencyInjection/ServiceCollectionExtensions.cs` — remove
-  `AddWincheRules(...)`; build `ruleEngine`; capture it in the `RulesWriteAuthorizer` and
+  `AddWincheRules(...)`; build `ruleEngine`; register it via `AddKeyedSingleton(RULE_ENGINE_KEY, ...)`;
+  resolve it with `GetRequiredKeyedService` in the `RulesWriteAuthorizer` and
   `RuleGuardedDocumentDatabase` factories.
 
 **WincheStorage**
+- `src/Winche.Storage/Constants/ServiceKeys.cs` — add `RULE_ENGINE_KEY`.
 - `src/Winche.Storage/DependencyInjection/WincheStorageOptions.cs` — add `Rulesets`; both
   `UseRules` overloads append to it.
 - `src/Winche.Storage/DependencyInjection/ServiceCollectionExtensions.cs` — remove
-  `AddWincheRules(...)`; build `ruleEngine` with `WincheRuleValueComparer.Instance`; capture it in
-  the `RuleGuardedFileStorage` factory.
+  `AddWincheRules(...)`; build `ruleEngine` with `WincheRuleValueComparer.Instance`; register it via
+  `AddKeyedSingleton(RULE_ENGINE_KEY, ...)`; resolve it with `GetRequiredKeyedService` in the
+  `RuleGuardedFileStorage` factory.
 
 ## Alternatives considered
 
-- **Keyed `RuleEngine` in `Winche.Rules`** (`AddWincheRules(key, ...)` + `[FromKeyedServices]` in
-  guards). Rejected: changes the `Winche.Rules` public API across all three libraries, keeps the
-  engine resolvable/clobberable in DI, and relies on magic-string keys.
-- **Package-local wrapper type** (e.g. `DocumentRuleEngine`/`FileRuleEngine`). Rejected as
-  unnecessary: injecting the built instance directly into guard closures already achieves full
-  isolation without a new type.
+- **Build-and-inject (no DI registration).** Build each engine locally and capture it directly in
+  the guard closures, leaving the engine out of DI entirely. Compile-time safe and the smallest
+  surface, but the engine is then unreachable from DI. Rejected because keeping the engine
+  resolvable (diagnostics / future consumers) is wanted, and the per-package key gives that with
+  negligible extra cost.
+- **Keyed engine implemented inside `Winche.Rules`** (a keyed `AddWincheRules` overload + keyed
+  rulesets). Rejected: changes the shared `Winche.Rules` public API and bumps its version for all
+  consumers; the per-package keying belongs to the consuming packages, not the engine library.
 
 ## Testing
 
@@ -105,6 +119,8 @@ For **each** package (`WincheDatabase`, `WincheStorage`):
   database-only-allowed path and a storage-only-allowed path), then assert the database guard
   denies the storage path and the storage guard denies the database path.
 - Add a default-deny test: register a package with no `UseRules` and assert access is denied.
+- Optionally assert each engine is resolvable via its key
+  (`GetRequiredKeyedService<RuleEngine>(RULE_ENGINE_KEY)`).
 
 ## Impact on other consumers
 
