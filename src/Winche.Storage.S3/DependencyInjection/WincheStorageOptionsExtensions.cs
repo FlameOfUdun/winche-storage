@@ -36,6 +36,22 @@ public static class WincheStorageOptionsExtensions
             if (string.IsNullOrWhiteSpace(opts.AccessKey) && !string.IsNullOrWhiteSpace(opts.SecretKey))
                 throw new InvalidOperationException("S3Archive: SecretKey is set but AccessKey is missing.");
 
+            if (!string.IsNullOrWhiteSpace(opts.ServiceUrl))
+            {
+                // S3-compatible endpoint (MinIO, Ceph, LocalStack, R2, …). ServiceURL overrides the
+                // regional endpoint; AuthenticationRegion supplies the SigV4 signing region.
+                var config = new AmazonS3Config
+                {
+                    ServiceURL = opts.ServiceUrl,
+                    ForcePathStyle = opts.ForcePathStyle,
+                    AuthenticationRegion = opts.RegionName,
+                };
+
+                return string.IsNullOrWhiteSpace(opts.AccessKey)
+                    ? new AmazonS3Client(config)
+                    : new AmazonS3Client(opts.AccessKey, opts.SecretKey, config);
+            }
+
             var region = RegionEndpoint.GetBySystemName(opts.RegionName);
 
             return string.IsNullOrWhiteSpace(opts.AccessKey)
