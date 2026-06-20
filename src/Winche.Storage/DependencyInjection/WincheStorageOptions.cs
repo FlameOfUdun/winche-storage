@@ -32,19 +32,25 @@ public sealed class WincheStorageOptions
     public string? ConnectionString { get; set; }
 
     /// <summary>
-    /// Adds a <see cref="RuleSet"/> to the Winche.Rules guard. Multiple calls accumulate — each
+    /// Rulesets registered via <see cref="UseRules(RuleSet)"/>. Collected here (not in the DI
+    /// container) so <c>AddWincheStorage</c> can build an engine from this package's rules only.
+    /// </summary>
+    internal List<RuleSet> Rulesets { get; } = [];
+
+    /// <summary>
+    /// Adds a <see cref="RuleSet"/> to this package's rules guard. Multiple calls accumulate — each
     /// ruleset's blocks are OR-combined. With no <c>UseRules</c> call, access is default-deny.
     /// </summary>
     public WincheStorageOptions UseRules(RuleSet ruleset)
     {
-        Services.AddSingleton(ruleset);
+        Rulesets.Add(ruleset);
         return this;
     }
 
     /// <summary>Builds a <see cref="RuleSet"/> from a builder delegate and adds it to the merged set.</summary>
     public WincheStorageOptions UseRules(Action<RulesetBuilder> configure)
     {
-        Services.AddSingleton(RulesetBuilder.Build(configure));
+        Rulesets.Add(RulesetBuilder.Build(configure));
         return this;
     }
 

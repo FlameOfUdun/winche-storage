@@ -1,7 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Winche.Rules;
-using Winche.Rules.DependencyInjection;
 using Winche.Storage.Archives;
 using Winche.Storage.Authorization;
 using Winche.Storage.Constants;
@@ -36,8 +35,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<HookInvocationDispatcher>();
         services.AddHostedService<HookInvocationProcessor>();
 
-        // Winche.Rules guard: merges every RuleSet from UseRules() plus this deny-all seed.
-        services.AddWincheRules(o => o.WithRuleset(_ => { }));
+        // This package owns an isolated rules engine, registered under a package-specific key so the
+        // Storage engine and the Database engine never merge. Built from this package's own UseRules
+        // rulesets (empty => deny-all). Uses the engine's DefaultRuleValueComparer — the database's
+        // ValueComparer-backed comparer is a Winche.Database concern and not appropriate here.
+        var ruleEngine = new RuleEngine(RuleSet.Merge(options.Rulesets));
+        services.AddKeyedSingleton(ServiceKeys.RULE_ENGINE_KEY, ruleEngine);
 
         // Guarded-by-default: IFileStorage resolves to the rules guard. The concrete FileStorage is the
         // unguarded core — inject it directly for trusted server-side callers that have no caller claims.
@@ -45,7 +48,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<RuleGuardedFileStorage>(sp =>
             new RuleGuardedFileStorage(
                 sp.GetRequiredService<FileStorage>(),
-                sp.GetRequiredService<RuleEngine>(),
+                sp.GetRequiredKeyedService<RuleEngine>(ServiceKeys.RULE_ENGINE_KEY),
                 () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims()));
         services.AddSingleton<IFileStorage>(sp =>
             sp.GetRequiredService<RuleGuardedFileStorage>());
