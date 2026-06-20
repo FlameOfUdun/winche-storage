@@ -26,6 +26,18 @@ public sealed record S3ArchiveOptions
     public string RegionName { get; set; } = string.Empty;
 
     /// <summary>
+    /// Custom S3-compatible endpoint (e.g. "http://localhost:9000" for MinIO). Leave null/empty to
+    /// target real AWS S3 (the default). When set, presigned URLs are generated against this endpoint.
+    /// </summary>
+    public string? ServiceUrl { get; set; }
+
+    /// <summary>
+    /// Use path-style addressing (bucket in the path, not the host). Required by MinIO and most
+    /// S3-compatible stores. Only consulted when <see cref="ServiceUrl"/> is set; defaults to true.
+    /// </summary>
+    public bool ForcePathStyle { get; set; } = true;
+
+    /// <summary>
     /// The expiry time for presigned URLs generated for accessing S3 objects.
     /// </summary>
     public TimeSpan PresignedUrlExpiry { get; set; } = TimeSpan.FromMinutes(15);

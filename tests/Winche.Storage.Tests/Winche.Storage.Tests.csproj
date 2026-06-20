@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Winche.Storage\Winche.Storage.csproj" />
+    <ProjectReference Include="..\..\src\Winche.Storage.S3\Winche.Storage.S3.csproj" />
   </ItemGroup>
 
 </Project>
