@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using System.Text.Json.Nodes;
 using Winche.Storage.Constants;
+using Winche.Storage.Infrastructure;
 using Winche.Storage.Interfaces;
 using Winche.Storage.Models;
 using Winche.Storage.Operations;
@@ -137,6 +138,41 @@ public sealed class FileStorage(
         await using var conn = await source.OpenConnectionAsync(ct);
         return await new ListFilesOperation(conn, null).ExecuteAsync(directory, mimeType, ct);
     }
+
+    /// <summary>
+    /// Lists the immediate sub-directory names directly under <paramref name="parentDirectory"/>
+    /// (or the top-level directories when null/empty). <b>Privileged</b>: this method is exposed
+    /// only on the concrete <see cref="FileStorage"/> class, never through <c>IFileStorage</c>,
+    /// and is never evaluated by the rules engine — mirroring Firestore's Admin-SDK-only
+    /// <c>listCollectionIds</c> which security rules never intercept.
+    /// Directory names are distinct and ordered by UTF-8 byte order (COLLATE "C").
+    /// </summary>
+    public async Task<ListDirectoryIdsResult> ListDirectoryIdsAsync(
+        string? parentDirectory, int? pageSize = null, string? pageToken = null, CancellationToken ct = default)
+    {
+        if (!string.IsNullOrEmpty(parentDirectory)
+            && !FilePathParser.IsValidPath(parentDirectory, out var error))
+            throw new ArgumentException(error);
+
+        var size = NormalizePageSize(pageSize);
+        var after = pageToken is null ? null : DirectoryPageToken.Decode(pageToken);
+
+        await using var conn = await source.OpenConnectionAsync(ct);
+        // Fetch one extra row to detect whether another page exists.
+        var ids = await new ListDirectoryIdsOperation(conn, null).ListAsync(parentDirectory, after, size + 1, ct);
+
+        if (ids.Count <= size)
+            return new ListDirectoryIdsResult(ids, null);
+
+        var page = ids.Take(size).ToList();
+        return new ListDirectoryIdsResult(page, DirectoryPageToken.Encode(page[^1]));
+    }
+
+    private const int DefaultPageSize = 100;
+    private const int MaxPageSize = 300;
+
+    private static int NormalizePageSize(int? pageSize) =>
+        pageSize is null or <= 0 ? DefaultPageSize : Math.Min(pageSize.Value, MaxPageSize);
 
     public async Task<UploadSession> SignPartAsync(string path, int partNumber, CancellationToken ct = default)
     {
