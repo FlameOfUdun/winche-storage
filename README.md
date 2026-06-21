@@ -281,6 +281,10 @@ Storage operations map to rule operations as follows:
 | `UpdateMetadataAsync`, `ConfirmUploadAsync`, `GenerateUploadUrlAsync`, `SignPartAsync` | `Update` |
 | `DeleteAsync` | `Delete` |
 
+`ListDirectoryIdsAsync` is intentionally absent from this table: it exists only on the concrete
+`FileStorage`, never on `IFileStorage`, and is never rule-evaluated — a privileged, admin-only
+operation (see [Privileged: `ListDirectoryIdsAsync`](#privileged-listdirectoryidsasync) below).
+
 ### Authorization flow
 
 A protected call loads the current record (as `resource`), gathers caller claims, and asks the
@@ -381,6 +385,45 @@ public sealed class ReportMailer(FileStorage files)   // concrete FileStorage = 
         files.GenerateDownloadUrlAsync(path, ct);
 }
 ```
+
+### Privileged: `ListDirectoryIdsAsync`
+
+Listing the **immediate sub-directory names** under a directory is a privileged, admin-style
+operation. It lives only on the concrete `FileStorage` — never on `IFileStorage` — and is never
+evaluated by the rules engine, mirroring Firestore's Admin-SDK-only `listCollectionIds` (and
+Winche.Database's `DocumentDatabase.ListCollectionIdsAsync`). It is not exposed over the REST API.
+
+```csharp
+// concrete FileStorage only — privileged, not rule-guarded
+Task<ListDirectoryIdsResult> ListDirectoryIdsAsync(
+    string? parentDirectory, int? pageSize = null, string? pageToken = null, CancellationToken ct = default);
+```
+
+Returns the distinct sub-directory names directly under `parentDirectory` (or the top-level
+directories when `null`/empty), ordered by UTF-8 byte order. Results are keyset-paginated: pass
+`NextPageToken` back as `pageToken` to walk pages (`pageSize` defaults to 100, capped at 300). Files
+sitting directly in `parentDirectory` are not sub-directories and are excluded.
+
+```csharp
+public sealed class Browser(FileStorage files)   // concrete = privileged
+{
+    public async Task<IReadOnlyList<string>> SubdirsAsync(string dir, CancellationToken ct)
+    {
+        var all = new List<string>();
+        string? token = null;
+        do
+        {
+            var page = await files.ListDirectoryIdsAsync(dir, pageToken: token, ct: ct);
+            all.AddRange(page.DirectoryIds);
+            token = page.NextPageToken;
+        } while (token is not null);
+        return all;
+    }
+}
+```
+
+`ListDirectoryIdsResult` carries `IReadOnlyList<string> DirectoryIds` and a `string? NextPageToken`
+(null on the last page).
 
 ### `FileRecord`
 
