@@ -50,4 +50,7 @@ public sealed record FileRecord
 
     [JsonPropertyName("uploadId")]
     public string? UploadId { get; init; }
+
+    [JsonPropertyName("contentHash")]
+    public string? ContentHash { get; init; }
 }

@@ -52,20 +52,22 @@ public sealed class S3Archive(
         });
     }
 
-    public async Task<bool> ObjectExistsAsync(string path, CancellationToken ct = default)
+    private static string? NormalizeETag(string? etag) => etag?.Trim('"');
+
+    public async Task<string?> GetObjectETagAsync(string path, CancellationToken ct = default)
     {
         try
         {
-            await s3.GetObjectMetadataAsync(new GetObjectMetadataRequest
+            var meta = await s3.GetObjectMetadataAsync(new GetObjectMetadataRequest
             {
                 BucketName = options.BucketName,
                 Key = path,
             }, ct);
-            return true;
+            return NormalizeETag(meta.ETag);
         }
         catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            return false;
+            return null;
         }
     }
 
@@ -139,7 +141,7 @@ public sealed class S3Archive(
         });
     }
 
-    public async Task CompleteMultipartUploadAsync(string path, string uploadId, CancellationToken ct = default)
+    public async Task<string?> CompleteMultipartUploadAsync(string path, string uploadId, CancellationToken ct = default)
     {
         var parts = new List<PartDetail>();
         string? marker = null;
@@ -157,13 +159,17 @@ public sealed class S3Archive(
             marker = listResponse.NextPartNumberMarker?.ToString();
         } while (listResponse.IsTruncated ?? false);
 
-        await s3.CompleteMultipartUploadAsync(new CompleteMultipartUploadRequest
+        var resp = await s3.CompleteMultipartUploadAsync(new CompleteMultipartUploadRequest
         {
             BucketName = options.BucketName,
             Key = path,
             UploadId = uploadId,
             PartETags = [.. parts.OrderBy(p => p.PartNumber).Select(p => new PartETag(p.PartNumber ?? 1, p.ETag))],
         }, ct);
+        // Persisted as the content fingerprint for staleness checks: any overwrite
+        // changes the ETag. A multipart ETag is composite ("<md5>-<parts>"), not a
+        // plain content hash — sufficient for change detection, not byte-identity.
+        return NormalizeETag(resp.ETag);
     }
 
     public async Task<IEnumerable<FilePart>> ListPartsAsync(string path, string uploadId, CancellationToken ct = default)
