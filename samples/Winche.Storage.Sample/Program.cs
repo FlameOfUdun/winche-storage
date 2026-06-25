@@ -15,14 +15,32 @@ builder.Services.AddWincheStorage(opts =>
         builder.Configuration.GetConnectionString("DefaultConnection") ??
         throw new InvalidOperationException("No connection string found for WincheStorage.");
 
-    opts.UseRules(r => r.Match("userFiles/{userId}/{rest=**}", owned =>
-        owned.Allow(RuleOperations.All, Expr.Auth("token", "userId").Eq(Expr.Param("userId")))));
-
-    opts.UseHooks(h => h.Add<FileUpdateHook>("userFiles/{userId}/{file=**}"));
-    opts.UseS3Archive(s3 => builder.Configuration.GetSection("WincheStorage:S3Archive").Bind(s3));
-    opts.MapClaims(ctx => new Dictionary<string, object?>
+    opts.UseRules(rb =>
     {
-        ["userId"] = "user-123",
+        rb.Match("userFiles/{userId}", mb =>
+        {
+            mb.Allow(RuleOperations.All, Expr.Auth("uid").Eq(Expr.Param("userId")));
+        });
+
+        rb.Match("userFiles/{userId}/{rest=**}", mb =>
+        {
+            mb.Allow(RuleOperations.All, Expr.Auth("uid").Eq(Expr.Param("userId")));
+        });
+    });
+
+    opts.UseHooks(h =>
+    {
+        h.Add<FileUpdateHook>("userFiles/{userId}/{file=**}");
+    });
+
+    opts.UseS3Archive(s3 =>
+    {
+        builder.Configuration.GetSection("WincheStorage:S3Archive").Bind(s3);
+    });
+    
+    opts.MapClaims(_ =>
+    {
+        return new Dictionary<string, object?> { ["uid"] = "user-123" };
     });
 });
 

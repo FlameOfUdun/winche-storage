@@ -23,8 +23,11 @@ public sealed class SchemaManager(
                 mime_type   TEXT        NOT NULL,
                 size_bytes  BIGINT      NOT NULL,
                 upload_status SMALLINT  NOT NULL,
-                upload_id     TEXT       NULL
+                upload_id     TEXT       NULL,
+                content_hash  TEXT       NULL
             );
+
+            ALTER TABLE {{WincheTables.Files}} ADD COLUMN IF NOT EXISTS content_hash TEXT;
 
             CREATE INDEX IF NOT EXISTS idx_{{WincheTables.Files}}_directory
                 ON {{WincheTables.Files}}(directory);

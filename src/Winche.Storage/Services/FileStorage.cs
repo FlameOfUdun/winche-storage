@@ -107,27 +107,25 @@ public sealed class FileStorage(
 
     public async Task<FileRecord> ConfirmUploadAsync(string path, CancellationToken ct = default)
     {
-        var file = await GetAsync(path, ct)
-            ?? throw new FileRecordNotFoundException("File not found");
-
+        var file = await GetAsync(path, ct) ?? throw new FileRecordNotFoundException("File not found");
         if (file.UploadStatus != UploadStatus.Pending)
             throw new InvalidUploadStatusException(path, UploadStatus.Pending, file.UploadStatus);
 
+        string? contentHash;
         if (file.UploadId is not null)
         {
-            await archive.CompleteMultipartUploadAsync(path, file.UploadId, ct);
+            contentHash = await archive.CompleteMultipartUploadAsync(path, file.UploadId, ct);
             await using var conn1 = await source.OpenConnectionAsync(ct);
             await new SetUploadIdOperation(conn1, null).ExecuteAsync(path, null, ct);
         }
         else
         {
-            var exists = await archive.ObjectExistsAsync(path, ct);
-            if (!exists)
-                throw new FileNotUploadedException(path);
+            contentHash = await archive.GetObjectETagAsync(path, ct);
+            if (contentHash is null) throw new FileNotUploadedException(path);
         }
 
         await using var conn = await source.OpenConnectionAsync(ct);
-        var record = await new ConfirmUploadOperation(conn, null).ExecuteAsync(path, ct)
+        var record = await new ConfirmUploadOperation(conn, null).ExecuteAsync(path, contentHash, ct)
             ?? throw new FileRecordNotFoundException(path);
         hookDispatcher.Enqueue(path, (h, t) => h.OnUploadConfirmedAsync(record, t));
         return record;
