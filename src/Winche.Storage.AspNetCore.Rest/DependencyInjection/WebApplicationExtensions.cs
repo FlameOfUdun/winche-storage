@@ -2,8 +2,8 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
-using System.Text;
 using Winche.Storage.AspNetCore.Rest.EndpointFilters;
+using Winche.Storage.AspNetCore.Rest.Infrastructure;
 using Winche.Storage.AspNetCore.Rest.Models;
 using Winche.Storage.Interfaces;
 
@@ -102,15 +102,5 @@ public static class WebApplicationExtensions
     }
 
     /// <summary>Decodes a base64url path segment (no padding, '-'/'_' alphabet) to its UTF-8 string.</summary>
-    private static string DecodePath(string encoded)
-    {
-        var s = encoded.Replace('-', '+').Replace('_', '/');
-        s = (s.Length % 4) switch
-        {
-            2 => s + "==",
-            3 => s + "=",
-            _ => s,
-        };
-        return Encoding.UTF8.GetString(Convert.FromBase64String(s));
-    }
+    private static string DecodePath(string encoded) => Base64UrlPath.Decode(encoded);
 }

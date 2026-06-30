@@ -138,6 +138,7 @@ services.AddWincheStorage(opts =>
 | `ConnectionString` | _(required)_ Postgres connection string. Schema comes from its `Search Path`. |
 | `UseRules(...)` | Adds a `RuleSet` to the guard. Multiple calls accumulate (OR-combined). |
 | `UseHooks(h => h.Add<T>(path))` | Registers `FileStoreHook` lifecycle listeners, each bound to a Firestore-style path pattern. |
+| `UseOrphanSweep(...)` | Enables the background sweep that reclaims archive objects with no matching DB row. See [Orphan Sweep](#orphan-sweep). |
 
 `UseS3Archive` (from `Winche.Storage.S3`) and `MapClaims` (from `Winche.Storage.AspNetCore`) are
 extension methods on `WincheStorageOptions`.
@@ -172,7 +173,7 @@ uses HTTP methods; per-file operations use AIP-136 colon-verbs (all `POST`).
 | `PUT` | `/{path}` | Register a new file record |
 | `GET` | `/{path}` | Get a file record |
 | `PATCH` | `/{path}` | Update file metadata |
-| `DELETE` | `/{path}` | Delete a file record (and its archive object) |
+| `DELETE` | `/{path}` | Delete a file record; the archive object is removed best-effort afterward |
 | `GET` | `/ping` | Liveness check |
 | `POST` | `/{path}:confirm` | Confirm an upload is complete |
 | `POST` | `/{path}:upload` | Generate a presigned upload URL |
@@ -354,6 +355,47 @@ public class AuditHook : FileStoreHook
 
 Register: `opts.UseHooks(h => h.Add<AuditHook>("userFiles/{userId}/{file=**}"))`.
 
+## Orphan Sweep
+
+`DeleteAsync` treats Postgres as the source of truth: it **commits the row removal first**, then
+deletes the archive object best-effort. If the archive call fails, the row is still gone and the
+object is left as a harmless **orphan** rather than rolling the delete back (which would leave an
+undeletable record). Archive deletes never throw out of `DeleteAsync`.
+
+The background **orphan sweep** reclaims those leftovers. Enable it with `UseOrphanSweep` (requires a
+real archive such as `UseS3Archive`):
+
+```csharp
+opts.UseOrphanSweep(o =>
+{
+    o.Interval    = TimeSpan.FromHours(6);    // how often the sweep runs
+    o.GraceWindow = TimeSpan.FromHours(24);   // min age before an unreferenced object is purged
+    o.Prefix      = null;                     // optional key prefix to scope the sweep
+});
+```
+
+A hosted service periodically lists the archive and deletes every object that has **no matching
+`winche_files` row** and is **older than `GraceWindow`**. The grace window protects in-flight uploads
+(object PUT, row not yet committed) from being reaped.
+
+| `OrphanSweepOptions` | Default | Description |
+| --- | --- | --- |
+| `Interval` | `06:00:00` | How often the sweep runs |
+| `GraceWindow` | `1.00:00:00` | An unreferenced object must be older than this to be purged |
+| `Prefix` | `null` | Optional key prefix; `null` sweeps the whole bucket |
+
+To run a sweep on demand, call the privileged `PurgeOrphansAsync` on the concrete `FileStorage`
+(never on `IFileStorage`, never rule-evaluated — same privileged model as `ListDirectoryIdsAsync`).
+It returns the number of objects identified as orphans and submitted for deletion:
+
+```csharp
+// concrete FileStorage only — privileged, not rule-guarded
+Task<int> PurgeOrphansAsync(string? prefix, TimeSpan graceWindow, CancellationToken ct = default);
+```
+
+> Custom `IArchive` implementations must implement `ListObjectsAsync` (added in 7.0) for the sweep to
+> work; `S3Archive` already does.
+
 ## `IFileStorage`
 
 Inject `IFileStorage` to interact with the store — it always resolves to the rules guard, which
@@ -436,6 +478,7 @@ public sealed class Browser(FileStorage files)   // concrete = privileged
 | `sizeBytes` | `long` | Declared file size |
 | `uploadStatus` | `UploadStatus` | `pending`, `complete`, or `failed` |
 | `uploadId` | `string?` | Multipart upload ID (when active) |
+| `contentHash` | `string?` | Archive object fingerprint (ETag); set on confirm |
 | `metadata` | `JsonObject` | Arbitrary key/value metadata |
 | `version` | `long` | Optimistic-concurrency version counter |
 | `createdAt` | `DateTime` | Creation timestamp |

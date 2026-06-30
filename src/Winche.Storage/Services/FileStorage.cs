@@ -39,37 +39,54 @@ public sealed class FileStorage(
 
     public async Task<bool> DeleteAsync(string path, CancellationToken ct = default)
     {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(ct);
+        // The database is the source of truth: commit the row removal FIRST, then clean up the
+        // archive best-effort. An archive failure must never roll the delete back — that would leave
+        // an undeletable row (object claimed present, every retry re-failing). Any object we miss is
+        // a harmless orphan reclaimed by the orphan sweep.
+        IReadOnlyList<FileDeleteCandidate> candidates;
+        IReadOnlyList<string> deleted;
 
+        await using (var conn = await source.OpenConnectionAsync(ct))
+        await using (var tx = await conn.BeginTransactionAsync(ct))
+        {
+            try
+            {
+                var op = new DeleteFileOperation(conn, tx);
+                candidates = await op.SelectForUpdateAsync(path, ct);
+                deleted = await op.ExecuteAsync(path, ct);
+                await tx.CommitAsync(ct);
+            }
+            catch
+            {
+                try { await tx.RollbackAsync(ct); } catch { }
+                throw;
+            }
+        }
+
+        if (deleted.Count == 0)
+            return false;
+
+        // Logical delete is durable now; surface it to hooks regardless of archive cleanup outcome.
+        foreach (var p in deleted)
+            hookDispatcher.Enqueue(p, (h, t) => h.OnFileDeletedAsync(p, t));
+
+        // Post-commit archive cleanup — best-effort, never throws back to the caller.
         try
         {
-            var op = new DeleteFileOperation(conn, tx);
-
-            var candidates = await op.SelectForUpdateAsync(path, ct);
-            var deleted = await op.ExecuteAsync(path, ct);
-
             foreach (var candidate in candidates)
             {
                 if (candidate.UploadStatus == UploadStatus.Pending && candidate.UploadId is not null)
                     await archive.AbortMultipartUploadAsync(candidate.Path, candidate.UploadId, ct);
             }
 
-            if (deleted.Count > 0)
-                await archive.DeleteObjectsAsync(deleted, ct);
-
-            await tx.CommitAsync(ct);
-
-            foreach (var p in deleted)
-                hookDispatcher.Enqueue(p, (h, t) => h.OnFileDeletedAsync(p, t));
-
-            return deleted.Count > 0;
+            await archive.DeleteObjectsAsync(deleted, ct);
         }
-        catch
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            try { await tx.RollbackAsync(ct); } catch { }
-            throw;
+            // Swallowed by design: the orphan sweep reclaims anything left in the archive.
         }
+
+        return true;
     }
 
     public async Task<UploadSession> GenerateUploadUrlAsync(string path, CancellationToken ct = default)
@@ -164,6 +181,53 @@ public sealed class FileStorage(
 
         var page = ids.Take(size).ToList();
         return new ListDirectoryIdsResult(page, DirectoryPageToken.Encode(page[^1]));
+    }
+
+    /// <summary>
+    /// PRIVILEGED. Reconciles the archive against the database: deletes every archive object that has
+    /// no matching <c>winche_files</c> row <em>and</em> is older than <paramref name="graceWindow"/>.
+    /// The grace window protects in-flight uploads (object PUT but row not yet committed) from being
+    /// reaped. Like <see cref="ListDirectoryIdsAsync"/> this is exposed only on the concrete
+    /// <see cref="FileStorage"/>, never through <c>IFileStorage</c>, and is never evaluated by the
+    /// rules engine — it is an admin/server-side sweep. Archive deletes are best-effort. Returns the
+    /// number of objects identified as orphans and submitted for deletion.
+    /// </summary>
+    public async Task<int> PurgeOrphansAsync(string? prefix, TimeSpan graceWindow, CancellationToken ct = default)
+    {
+        var cutoffUtc = DateTime.UtcNow - graceWindow;
+        const int batchSize = 1000;
+
+        var purged = 0;
+        var batch = new List<ArchivedObject>(batchSize);
+
+        await foreach (var obj in archive.ListObjectsAsync(prefix, ct))
+        {
+            // Inside the grace window it cannot be an orphan yet — skip before the DB round-trip.
+            if (obj.LastModifiedUtc >= cutoffUtc) continue;
+
+            batch.Add(obj);
+            if (batch.Count >= batchSize)
+                purged += await PurgeBatchAsync(batch, cutoffUtc, ct);
+        }
+        if (batch.Count > 0)
+            purged += await PurgeBatchAsync(batch, cutoffUtc, ct);
+
+        return purged;
+    }
+
+    private async Task<int> PurgeBatchAsync(List<ArchivedObject> batch, DateTime cutoffUtc, CancellationToken ct)
+    {
+        var keys = batch.Select(o => o.Key).ToArray();
+
+        await using var conn = await source.OpenConnectionAsync(ct);
+        var existing = await new SelectExistingPathsOperation(conn, null).ExecuteAsync(keys, ct);
+
+        var orphans = OrphanSelector.SelectOrphans(batch, existing, cutoffUtc);
+        if (orphans.Count > 0)
+            await archive.DeleteObjectsAsync(orphans, ct); // best-effort; never throws
+
+        batch.Clear();
+        return orphans.Count;
     }
 
     private const int DefaultPageSize = 100;

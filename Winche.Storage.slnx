@@ -10,5 +10,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Winche.Storage.Tests/Winche.Storage.Tests.csproj" />
+    <Project Path="tests/Winche.Storage.IntegrationTests/Winche.Storage.IntegrationTests.csproj" />
   </Folder>
 </Solution>

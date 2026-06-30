@@ -14,6 +14,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Winche.Storage.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Winche.Storage\Winche.Storage.csproj" />
     <ProjectReference Include="..\Winche.Storage.AspNetCore\Winche.Storage.AspNetCore.csproj" />
   </ItemGroup>
