@@ -65,6 +65,19 @@ public sealed class WincheStorageOptions
         configure(builder);
         return this;
     }
+
+    /// <summary>
+    /// Enables the background orphan sweep: a hosted service that periodically reconciles the archive
+    /// against the database and deletes archive objects with no matching row that are older than the
+    /// grace window. Requires a real archive (e.g. <c>UseS3Archive</c>); the default null archive
+    /// throws. See <see cref="OrphanSweepOptions"/> for interval, grace window, and prefix defaults.
+    /// </summary>
+    public WincheStorageOptions UseOrphanSweep(Action<OrphanSweepOptions>? configure = null)
+    {
+        Services.Configure(configure ?? (_ => { }));
+        Services.AddHostedService<Services.OrphanSweepService>();
+        return this;
+    }
 }
 
 /// <summary>

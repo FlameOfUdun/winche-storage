@@ -1,6 +1,7 @@
 using Amazon.S3;
 using Amazon.S3.Model;
 using Microsoft.Extensions.Options;
+using System.Runtime.CompilerServices;
 using Winche.Storage.Interfaces;
 using Winche.Storage.Models;
 using Winche.Storage.S3.Models;
@@ -80,6 +81,12 @@ public sealed class S3Archive(
         }, ct);
     }
 
+    /// <summary>
+    /// Best-effort bulk delete: never throws for S3-side failures (per-key <c>DeleteErrors</c> or
+    /// transport faults) and keeps processing the remaining batches. The database is the source of
+    /// truth, so anything left behind here is a harmless orphan that the orphan sweep reclaims later.
+    /// Only cancellation propagates.
+    /// </summary>
     public async Task DeleteObjectsAsync(IEnumerable<string> paths, CancellationToken ct = default)
     {
         var all = paths as IReadOnlyList<string> ?? paths.ToList();
@@ -94,20 +101,44 @@ public sealed class S3Archive(
                 .Select(p => new KeyVersion { Key = p })
                 .ToList();
 
-            var response = await s3.DeleteObjectsAsync(new DeleteObjectsRequest
+            try
             {
-                BucketName = options.BucketName,
-                Objects = batch,
-                Quiet = false,
-            }, ct);
-
-            if (response.DeleteErrors is { Count: > 0 } errs)
+                await s3.DeleteObjectsAsync(new DeleteObjectsRequest
+                {
+                    BucketName = options.BucketName,
+                    Objects = batch,
+                    Quiet = true,
+                }, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                throw new InvalidOperationException(
-                    $"S3 bulk delete failed for {errs.Count} object(s): "
-                  + string.Join("; ", errs.Select(e => $"{e.Key}: {e.Code} {e.Message}")));
+                // Best-effort: swallow and continue. The orphan sweep is the durability backstop.
             }
         }
+    }
+
+    public async IAsyncEnumerable<ArchivedObject> ListObjectsAsync(
+        string? prefix = null, [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        string? continuationToken = null;
+        do
+        {
+            var response = await s3.ListObjectsV2Async(new ListObjectsV2Request
+            {
+                BucketName = options.BucketName,
+                Prefix = string.IsNullOrEmpty(prefix) ? null : prefix,
+                ContinuationToken = continuationToken,
+            }, ct);
+
+            foreach (var obj in response.S3Objects ?? [])
+            {
+                var modified = DateTime.SpecifyKind(obj.LastModified ?? DateTime.MinValue, DateTimeKind.Utc);
+                yield return new ArchivedObject(obj.Key, modified);
+            }
+
+            continuationToken = (response.IsTruncated ?? false) ? response.NextContinuationToken : null;
+        }
+        while (continuationToken is not null);
     }
 
     public async Task<string> CreateMultipartUploadAsync(string path, string mimeType, CancellationToken ct = default)
