@@ -23,7 +23,7 @@ flowchart TD
     Base["Winche.Storage.AspNetCore<br/>FileClaimsAccessor · MapClaims"]
     S3["Winche.Storage.S3<br/>UseS3Archive · S3Archive"]
     Core["Winche.Storage<br/>IFileStorage · guard · schema · hooks"]
-    Rules["Winche.Rules<br/>RuleEngine · RulesetBuilder · Expr"]
+    Rules["Winche.Rules<br/>RuleEngine · RuleSetBuilder · Expr"]
 
     Rest --> Base
     Rest --> Core
@@ -271,6 +271,26 @@ opts.UseRules(r => r
   `Expr.Resource("sizeBytes")`, `Expr.Resource("metadata", "ownerId")`.
 - Caller claims are exposed under `request.auth`: `Expr.Auth("uid")` (the `uid` claim, if any) and
   `Expr.Auth("token", "<claim>")` (any mapped claim).
+
+### Hot-swapping rules at runtime
+
+The guard's engine reads its ruleset from a **mutable repository** on every evaluation, so rules can
+be replaced without restarting the app. The write side is registered as a keyed
+`IMutableRuleSetRepository` under `WincheStorageKeys.RULE_ENGINE_KEY` — resolve it and call `Update`:
+
+```csharp
+using Winche.Rules;
+using Winche.Rules.Expressions;
+using Winche.Storage.Constants;
+
+var repo = provider.GetRequiredKeyedService<IMutableRuleSetRepository>(WincheStorageKeys.RULE_ENGINE_KEY);
+repo.Update(RuleSetBuilder.Build(r => r.Match("public/{rest=**}", pub =>
+    pub.Allow(RuleOperations.Read, Expr.Const(true)))));
+```
+
+The swap is a lock-free atomic reference write: in-flight evaluations keep the ruleset they started
+with, and the next call observes the new rules. `Update` replaces the whole ruleset — build the full
+set you want live (it is not merged with the `UseRules` blocks registered at startup).
 
 Storage operations map to rule operations as follows:
 

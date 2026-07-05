@@ -10,7 +10,7 @@ internal sealed class SetUploadIdOperation(NpgsqlConnection conn, NpgsqlTransact
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
-            UPDATE {WincheTables.Files}
+            UPDATE {WincheStorageTables.Files}
             SET upload_id = @uploadId
             WHERE path = @path
             """;
