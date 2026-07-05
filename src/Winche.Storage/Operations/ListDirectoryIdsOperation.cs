@@ -40,7 +40,7 @@ internal sealed class ListDirectoryIdsOperation(NpgsqlConnection conn, NpgsqlTra
             SELECT cid
             FROM (
                 SELECT DISTINCT {cidExpr} AS cid
-                FROM {WincheTables.Files}
+                FROM {WincheStorageTables.Files}
                 WHERE {where}
             ) sub
             WHERE (@after::text IS NULL OR cid > @after::text COLLATE "C")

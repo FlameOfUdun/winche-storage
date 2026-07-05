@@ -1,6 +1,6 @@
 namespace Winche.Storage.Constants;
 
-internal static class ServiceKeys
+public static class WincheStorageKeys
 {
     public const string DATA_SOURCE_KEY = "WincheStorage";
 

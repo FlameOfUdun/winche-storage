@@ -28,7 +28,7 @@ public class RuleEngineIsolationTests
         using var provider = BuildProvider(o => o.UseRules(rb =>
             rb.Match("files/{id}", mb => mb.Allow([RuleOperation.Get], Expr.Const(true)))));
 
-        var engine = provider.GetRequiredKeyedService<RuleEngine>(ServiceKeys.RULE_ENGINE_KEY);
+        var engine = provider.GetRequiredKeyedService<RuleEngine>(WincheStorageKeys.RULE_ENGINE_KEY);
 
         Assert.True(await engine.AllowsAsync(RuleOperation.Get, "files/1", new RuleRequest()));
         Assert.False(await engine.AllowsAsync(RuleOperation.Get, "other/1", new RuleRequest()));
@@ -39,8 +39,32 @@ public class RuleEngineIsolationTests
     {
         using var provider = BuildProvider();
 
-        var engine = provider.GetRequiredKeyedService<RuleEngine>(ServiceKeys.RULE_ENGINE_KEY);
+        var engine = provider.GetRequiredKeyedService<RuleEngine>(WincheStorageKeys.RULE_ENGINE_KEY);
 
         Assert.False(await engine.AllowsAsync(RuleOperation.Get, "files/1", new RuleRequest()));
+    }
+
+    [Fact]
+    public async Task Rules_can_be_hot_swapped_midstream_through_the_keyed_engine()
+    {
+        // Start with a rule that grants get on files/* only.
+        using var provider = BuildProvider(o => o.UseRules(rb =>
+            rb.Match("files/{id}", mb => mb.Allow([RuleOperation.Get], Expr.Const(true)))));
+
+        var engine = provider.GetRequiredKeyedService<RuleEngine>(WincheStorageKeys.RULE_ENGINE_KEY);
+
+        // Before the swap: files/* allowed, docs/* denied.
+        Assert.True(await engine.AllowsAsync(RuleOperation.Get, "files/1", new RuleRequest()));
+        Assert.False(await engine.AllowsAsync(RuleOperation.Get, "docs/1", new RuleRequest()));
+
+        // Hot-swap the ruleset through the mutable write side registered under the SAME key —
+        // same engine instance, no rebuild. The new rules flip the grant from files/* to docs/*.
+        var repo = provider.GetRequiredKeyedService<IMutableRuleSetRepository>(WincheStorageKeys.RULE_ENGINE_KEY);
+        repo.Update(RuleSetBuilder.Build(rb =>
+            rb.Match("docs/{id}", mb => mb.Allow([RuleOperation.Get], Expr.Const(true)))));
+
+        // After the swap: the very same engine observes the new rules mid-flight.
+        Assert.False(await engine.AllowsAsync(RuleOperation.Get, "files/1", new RuleRequest()));
+        Assert.True(await engine.AllowsAsync(RuleOperation.Get, "docs/1", new RuleRequest()));
     }
 }

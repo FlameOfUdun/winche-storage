@@ -13,7 +13,7 @@ internal sealed class GetFileOperation(NpgsqlConnection conn, NpgsqlTransaction?
         cmd.Transaction = tx;
         cmd.CommandText = $"""
             SELECT *
-            FROM {WincheTables.Files}
+            FROM {WincheStorageTables.Files}
             WHERE path = @path
             """;
         cmd.Parameters.AddWithValue("path", path);

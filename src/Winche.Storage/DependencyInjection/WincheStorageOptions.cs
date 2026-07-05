@@ -48,9 +48,9 @@ public sealed class WincheStorageOptions
     }
 
     /// <summary>Builds a <see cref="RuleSet"/> from a builder delegate and adds it to the merged set.</summary>
-    public WincheStorageOptions UseRules(Action<RulesetBuilder> configure)
+    public WincheStorageOptions UseRules(Action<RuleSetBuilder> configure)
     {
-        Rulesets.Add(RulesetBuilder.Build(configure));
+        Rulesets.Add(RuleSetBuilder.Build(configure));
         return this;
     }
 

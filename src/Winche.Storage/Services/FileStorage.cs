@@ -10,7 +10,7 @@ using Winche.Storage.Operations;
 namespace Winche.Storage.Services;
 
 public sealed class FileStorage(
-    [FromKeyedServices(ServiceKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
+    [FromKeyedServices(WincheStorageKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
     IArchive archive,
     HookInvocationDispatcher hookDispatcher
 ) : IFileStorage

@@ -16,7 +16,7 @@ internal sealed class InsertFileOperation(NpgsqlConnection conn, NpgsqlTransacti
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
-            INSERT INTO {WincheTables.Files} (id, directory, path, metadata, mime_type, size_bytes, upload_status, created_at, updated_at, version)
+            INSERT INTO {WincheStorageTables.Files} (id, directory, path, metadata, mime_type, size_bytes, upload_status, created_at, updated_at, version)
             VALUES (@id, @directory, @path, @metadata::jsonb, @mimeType, @sizeBytes, @uploadStatus, NOW(), NOW(), 1)
             ON CONFLICT (path) DO UPDATE SET
                 id         = EXCLUDED.id,
@@ -27,7 +27,7 @@ internal sealed class InsertFileOperation(NpgsqlConnection conn, NpgsqlTransacti
                 size_bytes = EXCLUDED.size_bytes,
                 upload_status = EXCLUDED.upload_status,
                 updated_at = NOW(),
-                version    = {WincheTables.Files}.version + 1
+                version    = {WincheStorageTables.Files}.version + 1
             RETURNING *
             """;
 

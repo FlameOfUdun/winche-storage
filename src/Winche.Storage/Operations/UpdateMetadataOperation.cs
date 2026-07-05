@@ -14,10 +14,10 @@ internal sealed class UpdateMetadataOperation(NpgsqlConnection conn, NpgsqlTrans
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
-            UPDATE {WincheTables.Files}
+            UPDATE {WincheStorageTables.Files}
             SET metadata   = @metadata::jsonb,
                 updated_at = NOW(),
-                version    = {WincheTables.Files}.version + 1
+                version    = {WincheStorageTables.Files}.version + 1
             WHERE path = @path
             RETURNING *
             """;

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Winche.Rules;
+using Winche.Rules.DependencyInjection;
 using Winche.Storage.Archives;
 using Winche.Storage.Authorization;
 using Winche.Storage.Constants;
@@ -28,7 +29,7 @@ public static class ServiceCollectionExtensions
             : throw new InvalidOperationException(
                 $"{nameof(WincheStorageOptions)}.{nameof(WincheStorageOptions.ConnectionString)} is required.");
 
-        services.AddNpgsqlDataSource(connectionString, serviceKey: ServiceKeys.DATA_SOURCE_KEY);
+        services.AddNpgsqlDataSource(connectionString, serviceKey: WincheStorageKeys.DATA_SOURCE_KEY);
 
         // Schema + hooks
         services.AddSingleton<ISchemaManager, SchemaManager>();
@@ -37,10 +38,11 @@ public static class ServiceCollectionExtensions
 
         // This package owns an isolated rules engine, registered under a package-specific key so the
         // Storage engine and the Database engine never merge. Built from this package's own UseRules
-        // rulesets (empty => deny-all). Uses the engine's DefaultRuleValueComparer — the database's
-        // ValueComparer-backed comparer is a Winche.Database concern and not appropriate here.
-        var ruleEngine = new RuleEngine(RuleSet.Merge(options.Rulesets));
-        services.AddKeyedSingleton(ServiceKeys.RULE_ENGINE_KEY, ruleEngine);
+        // rulesets (empty => deny-all). The engine is hot-swappable via a mutable rule-set repository,
+        // still isolated under the package-specific key. Uses the engine's default DefaultRuleValueComparer
+        // — the database's ValueComparer-backed comparer is a Winche.Database concern and not appropriate here.
+        services.AddWincheRules(WincheStorageKeys.RULE_ENGINE_KEY, o => o
+            .WithMutableRuleSetRepository(RuleSet.Merge(options.Rulesets)));
 
         // Guarded-by-default: IFileStorage resolves to the rules guard. The concrete FileStorage is the
         // unguarded core — inject it directly for trusted server-side callers that have no caller claims.
@@ -48,7 +50,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<RuleGuardedFileStorage>(sp =>
             new RuleGuardedFileStorage(
                 sp.GetRequiredService<FileStorage>(),
-                sp.GetRequiredKeyedService<RuleEngine>(ServiceKeys.RULE_ENGINE_KEY),
+                sp.GetRequiredKeyedService<RuleEngine>(WincheStorageKeys.RULE_ENGINE_KEY),
                 () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims()));
         services.AddSingleton<IFileStorage>(sp =>
             sp.GetRequiredService<RuleGuardedFileStorage>());

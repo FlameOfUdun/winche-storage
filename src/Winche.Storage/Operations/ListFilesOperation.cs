@@ -13,7 +13,7 @@ internal sealed class ListFilesOperation(NpgsqlConnection conn, NpgsqlTransactio
 
         var sql = $"""
             SELECT *
-            FROM {WincheTables.Files}
+            FROM {WincheStorageTables.Files}
             WHERE directory = @directory AND {condition}
             ORDER BY path
             """;

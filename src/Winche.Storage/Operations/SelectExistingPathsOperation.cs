@@ -19,7 +19,7 @@ internal sealed class SelectExistingPathsOperation(NpgsqlConnection conn, Npgsql
         cmd.Transaction = tx;
         cmd.CommandText = $"""
             SELECT path
-            FROM {WincheTables.Files}
+            FROM {WincheStorageTables.Files}
             WHERE path = ANY(@paths)
             """;
         cmd.Parameters.Add(new NpgsqlParameter("paths", NpgsqlDbType.Array | NpgsqlDbType.Text)

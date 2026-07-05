@@ -14,7 +14,7 @@ internal sealed class ConfirmUploadOperation(NpgsqlConnection conn, NpgsqlTransa
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
-            UPDATE {WincheTables.Files}
+            UPDATE {WincheStorageTables.Files}
             SET upload_status = @status, updated_at = NOW(), content_hash = @hash
             WHERE path = @path
             RETURNING *

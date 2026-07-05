@@ -18,7 +18,7 @@ internal sealed class DeleteFileOperation(NpgsqlConnection conn, NpgsqlTransacti
         cmd.Transaction = tx;
         cmd.CommandText = $"""
             SELECT path, upload_id, upload_status
-            FROM {WincheTables.Files}
+            FROM {WincheStorageTables.Files}
             WHERE path = @path OR path LIKE @prefix ESCAPE '\'
             FOR UPDATE
             """;
@@ -45,7 +45,7 @@ internal sealed class DeleteFileOperation(NpgsqlConnection conn, NpgsqlTransacti
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
-            DELETE FROM {WincheTables.Files}
+            DELETE FROM {WincheStorageTables.Files}
             WHERE path = @path OR path LIKE @prefix ESCAPE '\'
             RETURNING path
             """;

@@ -1,4 +1,5 @@
 using Winche.Rules;
+using Winche.Rules.Evaluation;
 using Winche.Rules.Expressions;
 using Winche.Storage.Authorization;
 using Xunit;
@@ -7,8 +8,8 @@ namespace Winche.Storage.Tests;
 
 public class RuleGuardedFileStorageTests
 {
-    private static RuleGuardedFileStorage Guarded(RecordingFileStorage inner, Action<RulesetBuilder> rules) =>
-        new(inner, new RuleEngine(RulesetBuilder.Build(rules)), () => null);
+    private static RuleGuardedFileStorage Guarded(RecordingFileStorage inner, Action<RuleSetBuilder> rules) =>
+        new(inner, new RuleEngine(new StaticRuleSetRepository(RuleSetBuilder.Build(rules)), new DefaultRuleValueComparer()), () => null);
 
     [Fact]
     public async Task Allowed_operation_delegates_to_the_inner_core()
