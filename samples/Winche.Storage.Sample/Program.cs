@@ -38,9 +38,27 @@ builder.Services.AddWincheStorage(opts =>
         builder.Configuration.GetSection("WincheStorage:S3Archive").Bind(s3);
     });
     
-    opts.MapClaims(_ =>
+    opts.MapClaims(ctx =>
     {
-        return new Dictionary<string, object?> { ["uid"] = "user-123" };
+        // The SDK sends `Authorization: Bearer <token>`. This sample takes the
+        // token verbatim as the uid, so signing in as "alice" scopes to
+        // userFiles/alice and the rules below actually separate users. A real
+        // deployment validates a JWT here and reads its subject.
+        //
+        // Previously this returned a fixed "user-123" for every request, which
+        // made the sample unable to demonstrate multi-user isolation at all.
+        var header = ctx.Request.Headers.Authorization.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(header)) return null; // -> rules deny
+
+        const string prefix = "Bearer ";
+        var token = header.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? header[prefix.Length..]
+            : header;
+
+        token = token.Trim();
+        return string.IsNullOrWhiteSpace(token)
+            ? null
+            : new Dictionary<string, object?> { ["uid"] = token };
     });
 });
 
