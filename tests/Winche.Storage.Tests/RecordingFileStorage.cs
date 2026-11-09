@@ -23,7 +23,11 @@ internal sealed class RecordingFileStorage : IFileStorage
         return Task.FromResult(DeleteReturns);
     }
 
-    public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default)
+    {
+        Calls.Add($"Set:{path}");
+        return Task.FromResult<FileRecord>(null!);
+    }
     public Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<UploadSession> GenerateUploadUrlAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();

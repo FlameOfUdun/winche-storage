@@ -6,6 +6,7 @@ using Winche.Storage.Archives;
 using Winche.Storage.Authorization;
 using Winche.Storage.Constants;
 using Winche.Storage.Interfaces;
+using Winche.Storage.Models;
 using Winche.Storage.Services;
 
 namespace Winche.Storage.DependencyInjection;
@@ -46,6 +47,7 @@ public static class ServiceCollectionExtensions
 
         // Guarded-by-default: IFileStorage resolves to the rules guard. The concrete FileStorage is the
         // unguarded core — inject it directly for trusted server-side callers that have no caller claims.
+        services.AddSingleton(new StorageLimits(options.MaxFileSizeBytes));
         services.AddSingleton<FileStorage>();
         services.AddSingleton<RuleGuardedFileStorage>(sp =>
             new RuleGuardedFileStorage(

@@ -12,11 +12,15 @@ namespace Winche.Storage.Services;
 public sealed class FileStorage(
     [FromKeyedServices(WincheStorageKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
     IArchive archive,
-    HookInvocationDispatcher hookDispatcher
+    HookInvocationDispatcher hookDispatcher,
+    StorageLimits? limits = null
 ) : IFileStorage
 {
     public async Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default)
     {
+        if (sizeBytes < 0 || sizeBytes > limits?.MaxFileSizeBytes)
+            throw new FileTooLargeException(path, sizeBytes, limits?.MaxFileSizeBytes);
+
         await using var conn = await source.OpenConnectionAsync(ct);
         var record = await new InsertFileOperation(conn, null).ExecuteAsync(path, mimeType, sizeBytes, metadata, ct);
         hookDispatcher.Enqueue(path, (h, t) => h.OnFileRegisteredAsync(record, t));
@@ -131,6 +135,16 @@ public sealed class FileStorage(
         string? contentHash;
         if (file.UploadId is not null)
         {
+            // Parts are signed without a length, so this is the only point where the declared size (and with
+            // it MaxFileSizeBytes) can be held to. A mismatch discards the parts; the client starts over.
+            var uploaded = (await archive.ListPartsAsync(path, file.UploadId, ct)).Sum(p => p.Size ?? 0);
+            if (uploaded != file.SizeBytes)
+            {
+                await archive.AbortMultipartUploadAsync(path, file.UploadId, ct);
+                await using var abortConn = await source.OpenConnectionAsync(ct);
+                await new SetUploadIdOperation(abortConn, null).ExecuteAsync(path, null, ct);
+                throw new UploadSizeMismatchException(path, file.SizeBytes, uploaded);
+            }
             contentHash = await archive.CompleteMultipartUploadAsync(path, file.UploadId, ct);
             await using var conn1 = await source.OpenConnectionAsync(ct);
             await new SetUploadIdOperation(conn1, null).ExecuteAsync(path, null, ct);

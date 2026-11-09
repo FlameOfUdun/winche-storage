@@ -20,6 +20,14 @@ internal class ExceptionHandler : IEndpointFilter
         {
             return Results.Json(new { error = ex.Message }, statusCode: 400, contentType: "application/json");
         }
+        catch (FileTooLargeException ex)
+        {
+            return Results.Json(new { error = ex.Message }, statusCode: 413, contentType: "application/json");
+        }
+        catch (UploadSizeMismatchException ex)
+        {
+            return Results.Json(new { error = ex.Message }, statusCode: 400, contentType: "application/json");
+        }
         catch (AccessDeniedException ex)
         {
             return Results.Json(new { error = ex.Message }, statusCode: 403, contentType: "application/json");

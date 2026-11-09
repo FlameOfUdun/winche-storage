@@ -20,6 +20,7 @@ internal sealed class FakeArchive : IArchive
     public string? SingleObjectETag { get; set; } = "etag-single";
     public string? MultipartETag { get; set; } = "etag-multipart";
     public string NextUploadId { get; set; } = "upload-1";
+    public List<long> PartSizes { get; set; } = [];
 
     // Recorded calls
     public List<string> AbortedUploadIds { get; } = [];
@@ -73,7 +74,7 @@ internal sealed class FakeArchive : IArchive
         => Task.FromResult(new DownloadSession { Url = $"https://archive/get/{path}", ExpiresAt = default });
 
     public Task<IEnumerable<FilePart>> ListPartsAsync(string path, string uploadId, CancellationToken ct = default)
-        => Task.FromResult<IEnumerable<FilePart>>([]);
+        => Task.FromResult<IEnumerable<FilePart>>(PartSizes.Select((size, i) => new FilePart { Number = i + 1, Size = size }).ToList());
 
     public Task DeleteAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
 }
