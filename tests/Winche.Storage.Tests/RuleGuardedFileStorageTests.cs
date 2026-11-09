@@ -34,4 +34,19 @@ public class RuleGuardedFileStorageTests
 
         Assert.DoesNotContain("Delete:files/1", inner.Calls);
     }
+    [Fact]
+    public async Task A_create_rule_sees_the_incoming_file_as_request_resource()
+    {
+        var inner = new RecordingFileStorage();
+        var guarded = Guarded(inner, rb =>
+            rb.Match("files/{id}", mb => mb.Allow([RuleOperation.Create],
+                Expr.RequestResource("sizeBytes").Le(Expr.Const(100))
+                    .And(Expr.RequestResource("directory").Eq(Expr.Value(RuleValue.String("files")))))));
+
+        await guarded.SetAsync("files/small", "text/plain", 100);
+        await Assert.ThrowsAsync<AccessDeniedException>(() => guarded.SetAsync("files/large", "text/plain", 101));
+
+        Assert.Contains(inner.Calls, c => c.Contains("files/small"));
+        Assert.DoesNotContain(inner.Calls, c => c.Contains("files/large"));
+    }
 }

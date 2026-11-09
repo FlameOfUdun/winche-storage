@@ -9,7 +9,41 @@ public class UploadLifecycleTests(PostgresFixture fixture) : IClassFixture<Postg
     private FileStorage NewStorage(FakeArchive archive) =>
         new(fixture.DataSource, archive, new HookInvocationDispatcher([]));
 
+    private FileStorage LimitedStorage(FakeArchive archive, long max) =>
+        new(fixture.DataSource, archive, new HookInvocationDispatcher([]), new StorageLimits(max));
+
     public Task InitializeAsync() => fixture.ResetAsync();
+
+    [Fact]
+    public async Task SetAsync_refuses_a_file_over_the_size_limit_and_a_negative_size()
+    {
+        var storage = LimitedStorage(new FakeArchive(), max: 100);
+
+        await storage.SetAsync("docs/ok.bin", "application/octet-stream", 100);
+        var tooBig = await Assert.ThrowsAsync<FileTooLargeException>(() => storage.SetAsync("docs/big.bin", "application/octet-stream", 101));
+        Assert.Equal(100, tooBig.MaxBytes);
+        await Assert.ThrowsAsync<FileTooLargeException>(() => storage.SetAsync("docs/neg.bin", "application/octet-stream", -1));
+        Assert.Null(await storage.GetAsync("docs/big.bin"));
+    }
+
+    [Fact]
+    public async Task ConfirmUploadAsync_refuses_multipart_parts_that_exceed_the_declared_size()
+    {
+        // Parts are signed without a length: a client registers 1000 bytes, then sends more.
+        var archive = new FakeArchive { NextUploadId = "mp-x", PartSizes = [5_000_000, 5_000_000] };
+        var storage = NewStorage(archive);
+        await storage.SetAsync("docs/big.bin", "application/octet-stream", 1000);
+        await storage.SignPartAsync("docs/big.bin", 1);
+
+        var ex = await Assert.ThrowsAsync<UploadSizeMismatchException>(() => storage.ConfirmUploadAsync("docs/big.bin"));
+
+        Assert.Equal(10_000_000, ex.Actual);
+        Assert.Contains("mp-x", archive.AbortedUploadIds);
+        Assert.DoesNotContain("mp-x", archive.CompletedUploadIds);
+        var file = await storage.GetAsync("docs/big.bin");
+        Assert.Equal(UploadStatus.Pending, file!.UploadStatus);
+        Assert.Null(file.UploadId);
+    }
     public Task DisposeAsync() => Task.CompletedTask;
 
     [Fact]
@@ -61,7 +95,7 @@ public class UploadLifecycleTests(PostgresFixture fixture) : IClassFixture<Postg
     [Fact]
     public async Task ConfirmUploadAsync_completes_multipart_and_clears_upload_id()
     {
-        var archive = new FakeArchive { NextUploadId = "mp-7", MultipartETag = "mp-hash" };
+        var archive = new FakeArchive { NextUploadId = "mp-7", MultipartETag = "mp-hash", PartSizes = [600, 400] };
         var storage = NewStorage(archive);
         await storage.SetAsync("docs/big.bin", "application/octet-stream", 1000);
         await storage.SignPartAsync("docs/big.bin", 1); // starts multipart, sets upload_id

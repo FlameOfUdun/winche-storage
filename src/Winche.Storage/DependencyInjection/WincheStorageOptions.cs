@@ -32,6 +32,15 @@ public sealed class WincheStorageOptions
     public string? ConnectionString { get; set; }
 
     /// <summary>
+    /// Largest file a client may register, in bytes; null (the default) means no limit beyond the
+    /// archive's own. A larger declared size is refused when the record is created (413 over REST), and
+    /// a multipart upload whose parts don't add up to the declared size is refused at confirmation, so
+    /// the limit holds for the bytes actually stored. For per-path limits, write a create rule on
+    /// <c>request.resource.sizeBytes</c>.
+    /// </summary>
+    public long? MaxFileSizeBytes { get; set; }
+
+    /// <summary>
     /// Rulesets registered via <see cref="UseRules(RuleSet)"/>. Collected here (not in the DI
     /// container) so <c>AddWincheStorage</c> can build an engine from this package's rules only.
     /// </summary>

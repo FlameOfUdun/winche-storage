@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Winche.Rules;
+using Winche.Storage.Infrastructure;
 using Winche.Storage.Models;
 
 namespace Winche.Storage.Authorization;
@@ -26,6 +27,22 @@ internal static class FileToResource
             ["updatedAt"] = RuleValue.Timestamp(new DateTimeOffset(file.UpdatedAt, TimeSpan.Zero)),
             ["metadata"] = ConvertJsonNode(file.MetaData),
         });
+
+    /// <summary>
+    /// <c>request.resource</c> for a file being registered: <c>path</c>, <c>directory</c>, <c>mimeType</c>,
+    /// <c>sizeBytes</c> and <c>metadata</c> (the fields a client supplies).
+    /// </summary>
+    public static RuleValue Incoming(string path, string mimeType, long sizeBytes, JsonObject? metadata)
+    {
+        return RuleValue.Map(new Dictionary<string, RuleValue>
+        {
+            ["path"] = RuleValue.String(path),
+            ["directory"] = RuleValue.String(FilePathParser.Parse(path).Directory),
+            ["mimeType"] = RuleValue.String(mimeType),
+            ["sizeBytes"] = RuleValue.Int(sizeBytes),
+            ["metadata"] = ConvertJsonNode(metadata),
+        });
+    }
 
     private static RuleValue ConvertJsonNode(JsonNode? node) => node switch
     {

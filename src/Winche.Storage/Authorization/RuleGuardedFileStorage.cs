@@ -21,7 +21,9 @@ public sealed class RuleGuardedFileStorage(
 
     public async Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default)
     {
-        await AuthorizeAsync(RuleOperation.Create, path, RuleValue.Null, "create", ct);
+        // The file being registered is request.resource, so a create rule can check its size or type.
+        var incoming = FileToResource.Incoming(path, mimeType, sizeBytes, metadata);
+        await AuthorizeAsync(RuleOperation.Create, path, RuleValue.Null, "create", ct, incoming);
         return await inner.SetAsync(path, mimeType, sizeBytes, metadata, ct);
     }
 
@@ -89,12 +91,12 @@ public sealed class RuleGuardedFileStorage(
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private async Task AuthorizeAsync(RuleOperation operation, string path, RuleValue resource, string method, CancellationToken ct)
+    private async Task AuthorizeAsync(RuleOperation operation, string path, RuleValue resource, string method, CancellationToken ct, RuleValue? requestResource = null)
     {
         var request = new RuleRequest
         {
             Resource = resource,
-            Request = RequestBuilder.Build(claimsProvider(), method, RuleValue.Null),
+            Request = RequestBuilder.Build(claimsProvider(), method, requestResource ?? RuleValue.Null),
             Provider = new FileStoreResourceProvider(inner),
         };
         if (!await engine.AllowsAsync(operation, path, request, ct))
