@@ -29,7 +29,7 @@ public sealed class PostgresFixture : IAsyncLifetime
     {
         await using var conn = await DataSource.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "TRUNCATE winche_files";
+        cmd.CommandText = "TRUNCATE winche_files, winche_storage_hook_deliveries";
         await cmd.ExecuteNonQueryAsync();
     }
 

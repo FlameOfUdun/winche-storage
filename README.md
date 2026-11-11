@@ -361,6 +361,22 @@ single-segment captures, and a trailing `{name=**}` recursive wildcard matching 
 segments; bare `*`/`**` are not valid). The same hook type can be bound to multiple paths. Hooks are
 dispatched asynchronously.
 
+**Delivery (8.3.0).** File changes — registered, upload confirmed, metadata updated, deleted — reach their hooks
+durably: each change writes one delivery per matching hook to `winche_storage_hook_deliveries` **in the same
+transaction**, and a background worker on every node runs them (`FOR UPDATE SKIP LOCKED`: each delivery on one
+node). So:
+
+- nothing is lost to a restart or a crash — undelivered changes run when a node is back;
+- a hook that throws is retried with backoff (1 s, doubling, up to 5 min); after an hour it becomes a **dead
+  letter** — `StorageHookDeadLetters` lists, retries (`RetryAsync`) or discards them; kept 7 days;
+- one file's events reach a hook in order (a failing one holds back that file's later events for that hook);
+- delivery is **at least once**: a hook may see an event twice (a node died mid-call), so make side effects
+  idempotent (e.g. skip a report you already emailed).
+
+A hook's identity is its type plus path pattern: renaming either starts a new hook (undelivered rows for the old
+one are dropped after 7 days). Tune with `opts.HookDelivery = new HookDeliveryOptions { ... }`. The two URL events
+(`OnUploadUrlGenerated`, `OnDownloadUrlGenerated`) change no data and stay best-effort, in memory.
+
 ```csharp
 public class AuditHook : FileStoreHook
 {

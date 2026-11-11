@@ -40,6 +40,26 @@ public sealed class SchemaManager(
 
             CREATE INDEX IF NOT EXISTS idx_{{WincheStorageTables.Files}}_metadata
                 ON {{WincheStorageTables.Files}} USING GIN(metadata);
+
+            -- Durable hook deliveries (8.3.0): one row per hook per file change, deleted once the hook succeeds.
+            CREATE TABLE IF NOT EXISTS {{WincheStorageTables.HookDeliveries}} (
+                id              BIGSERIAL   PRIMARY KEY,
+                hook            TEXT        NOT NULL,
+                kind            TEXT        NOT NULL,
+                path            TEXT        NOT NULL,
+                record          JSONB       NULL,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+                next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                attempts        INT         NOT NULL DEFAULT 0,
+                last_error      TEXT        NULL,
+                dead_at         TIMESTAMPTZ NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_{{WincheStorageTables.HookDeliveries}}_due
+                ON {{WincheStorageTables.HookDeliveries}}(next_attempt_at) WHERE dead_at IS NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_{{WincheStorageTables.HookDeliveries}}_order
+                ON {{WincheStorageTables.HookDeliveries}}(hook, path, id) WHERE dead_at IS NULL;
             """;
 
         await using var conn = await source.OpenConnectionAsync(ct);
