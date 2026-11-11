@@ -68,6 +68,12 @@ public sealed class WincheStorageOptions
     /// path pattern at registration time. Multiple calls accumulate — each binding is registered as a
     /// singleton so that <c>GetServices&lt;HookRegistration&gt;()</c> returns them all at startup.
     /// </summary>
+    /// <summary>
+    /// How file hooks are delivered (retries, lease, dead letters). File changes reach their hooks durably and at
+    /// least once; see <see cref="Models.HookDeliveryOptions"/>.
+    /// </summary>
+    public Models.HookDeliveryOptions HookDelivery { get; set; } = new();
+
     public WincheStorageOptions UseHooks(Action<HookBuilder> configure)
     {
         var builder = new HookBuilder(Services);

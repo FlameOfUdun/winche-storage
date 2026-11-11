@@ -36,6 +36,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISchemaManager, SchemaManager>();
         services.AddSingleton<HookInvocationDispatcher>();
         services.AddHostedService<HookInvocationProcessor>();
+        services.AddSingleton(options.HookDelivery);
+        services.AddHostedService<HookDeliveryService>();
+        services.AddSingleton<StorageHookDeadLetters>();
 
         // This package owns an isolated rules engine, registered under a package-specific key so the
         // Storage engine and the Database engine never merge. Built from this package's own UseRules

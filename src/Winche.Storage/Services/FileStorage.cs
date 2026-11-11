@@ -21,10 +21,8 @@ public sealed class FileStorage(
         if (sizeBytes < 0 || sizeBytes > limits?.MaxFileSizeBytes)
             throw new FileTooLargeException(path, sizeBytes, limits?.MaxFileSizeBytes);
 
-        await using var conn = await source.OpenConnectionAsync(ct);
-        var record = await new InsertFileOperation(conn, null).ExecuteAsync(path, mimeType, sizeBytes, metadata, ct);
-        hookDispatcher.Enqueue(path, (h, t) => h.OnFileRegisteredAsync(record, t));
-        return record;
+        return (await WithHooksAsync(HookEventKind.Registered, path,
+            async (conn, tx) => (FileRecord?)await new InsertFileOperation(conn, tx).ExecuteAsync(path, mimeType, sizeBytes, metadata, ct), ct))!;
     }
 
     public async Task<FileRecord?> GetAsync(string path, CancellationToken ct = default)
@@ -35,10 +33,8 @@ public sealed class FileStorage(
 
     public async Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct = default)
     {
-        await using var conn = await source.OpenConnectionAsync(ct);
-        var record = await new UpdateMetadataOperation(conn, null).ExecuteAsync(path, patch, ct);
-        if (record is not null) hookDispatcher.Enqueue(path, (h, t) => h.OnMetadataUpdatedAsync(record, t));
-        return record;
+        return await WithHooksAsync(HookEventKind.MetadataUpdated, path,
+            (conn, tx) => new UpdateMetadataOperation(conn, tx).ExecuteAsync(path, patch, ct), ct);
     }
 
     public async Task<bool> DeleteAsync(string path, CancellationToken ct = default)
@@ -58,6 +54,8 @@ public sealed class FileStorage(
                 var op = new DeleteFileOperation(conn, tx);
                 candidates = await op.SelectForUpdateAsync(path, ct);
                 deleted = await op.ExecuteAsync(path, ct);
+                foreach (var p in deleted)
+                    await HookOutbox.AddAsync(conn, tx, hookDispatcher.Registrations, HookEventKind.Deleted, p, null, ct);
                 await tx.CommitAsync(ct);
             }
             catch
@@ -70,9 +68,8 @@ public sealed class FileStorage(
         if (deleted.Count == 0)
             return false;
 
-        // Logical delete is durable now; surface it to hooks regardless of archive cleanup outcome.
-        foreach (var p in deleted)
-            hookDispatcher.Enqueue(p, (h, t) => h.OnFileDeletedAsync(p, t));
+        // Logical delete (and its hook deliveries) is durable now, whatever happens to the archive cleanup.
+        hookDispatcher.Wake();
 
         // Post-commit archive cleanup — best-effort, never throws back to the caller.
         try
@@ -155,10 +152,28 @@ public sealed class FileStorage(
             if (contentHash is null) throw new FileNotUploadedException(path);
         }
 
-        await using var conn = await source.OpenConnectionAsync(ct);
-        var record = await new ConfirmUploadOperation(conn, null).ExecuteAsync(path, contentHash, ct)
+        return await WithHooksAsync(HookEventKind.UploadConfirmed, path,
+            (conn, tx) => new ConfirmUploadOperation(conn, tx).ExecuteAsync(path, contentHash, ct), ct)
             ?? throw new FileRecordNotFoundException(path);
-        hookDispatcher.Enqueue(path, (h, t) => h.OnUploadConfirmedAsync(record, t));
+    }
+
+    /// <summary>
+    /// Runs a file change and writes its hook deliveries in one transaction, so a committed change always reaches its
+    /// hooks (<see cref="HookDeliveryService"/>), even across a restart. A null result (no such file) delivers nothing.
+    /// </summary>
+    private async Task<FileRecord?> WithHooksAsync(string kind, string path,
+        Func<NpgsqlConnection, NpgsqlTransaction, Task<FileRecord?>> change, CancellationToken ct)
+    {
+        FileRecord? record;
+        await using (var conn = await source.OpenConnectionAsync(ct))
+        await using (var tx = await conn.BeginTransactionAsync(ct))
+        {
+            record = await change(conn, tx);
+            if (record is not null)
+                await HookOutbox.AddAsync(conn, tx, hookDispatcher.Registrations, kind, path, record, ct);
+            await tx.CommitAsync(ct);
+        }
+        if (record is not null) hookDispatcher.Wake();
         return record;
     }
 
