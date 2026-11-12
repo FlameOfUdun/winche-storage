@@ -25,6 +25,27 @@ public sealed class FileStorage(
             async (conn, tx) => (FileRecord?)await new InsertFileOperation(conn, tx).ExecuteAsync(path, mimeType, sizeBytes, metadata, ct), ct))!;
     }
 
+    /// <summary>
+    /// Deletes every file whose path starts with <paramref name="prefix"/> (e.g. <c>users/u1/</c>), one at a time so hooks
+    /// see each delete; safe to run again. Server code: not rule-checked. Returns how many were deleted.
+    /// </summary>
+    public async Task<int> DeleteUnderAsync(string prefix, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(prefix) || prefix.Trim('/').Length == 0)
+            throw new ArgumentException("Give a folder to delete under; deleting every file isn't allowed this way.", nameof(prefix));
+        var paths = new List<string>();
+        await using (var cmd = source.CreateCommand($"SELECT path FROM {Constants.WincheStorageTables.Files} WHERE starts_with(path, $1) ORDER BY path"))
+        {
+            cmd.Parameters.AddWithValue(prefix);
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct)) paths.Add(reader.GetString(0));
+        }
+        var deleted = 0;
+        foreach (var path in paths)
+            if (await DeleteAsync(path, ct)) deleted++;
+        return deleted;
+    }
+
     public async Task<FileRecord?> GetAsync(string path, CancellationToken ct = default)
     {
         await using var conn = await source.OpenConnectionAsync(ct);

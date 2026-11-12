@@ -149,6 +149,9 @@ public sealed class WincheStorageOptions
 /// </summary>
 public sealed class HookBuilder(IServiceCollection services)
 {
+    /// <summary>The app's services, for extensions that add hooks with their own needs (e.g. Winche.Webhooks).</summary>
+    public IServiceCollection Services => services;
+
     /// <summary>
     /// Registers a hook <typeparamref name="THook"/> (constructed via DI, so constructor injection
     /// works) bound to <paramref name="path"/>. The same hook type may be bound to multiple paths.

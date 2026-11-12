@@ -45,6 +45,6 @@ public sealed class HookInvocationDispatcher(
     public void Complete()
     {
         foreach (var channel in _channels.Values)
-            channel.Writer.Complete();
+            channel.Writer.TryComplete();   // stopping twice (e.g. a test host disposed after StopAsync) is fine
     }
 }
