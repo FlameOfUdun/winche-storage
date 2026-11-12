@@ -14,7 +14,7 @@ namespace Winche.Storage.FileSystem;
 /// archive signs (HMAC-SHA256, expiring, bound to the method, the path and — for uploads — the size), the way they
 /// would with S3's presigned URLs. Map the endpoints with <c>app.MapWincheStorageFileSystem()</c>.
 /// </summary>
-public sealed class FileSystemArchive : IArchive
+public sealed class FileSystemArchive : IArchive, Winche.Storage.Locations.IArchiveContent
 {
     private readonly FileSystemArchiveOptions _options;
     private readonly IHttpContextAccessor _http;
@@ -39,6 +39,31 @@ public sealed class FileSystemArchive : IArchive
     internal FileSystemArchiveOptions Options => _options;
     private string ObjectsDir => Path.Combine(Root, "objects");
     private string PartsDir => Path.Combine(Root, "parts");
+
+    // ── IArchiveContent (moving files between locations) ──────────────────────────
+
+    public Task<Stream?> OpenReadAsync(string path, CancellationToken ct = default)
+    {
+        var file = FileOf(path);
+        return Task.FromResult<Stream?>(File.Exists(file) ? new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true) : null);
+    }
+
+    public async Task WriteAsync(string path, Stream content, string? contentType, CancellationToken ct = default)
+    {
+        var file = FileOf(path);
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        var temp = TempBeside(file);
+        try
+        {
+            await using (var output = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+                await content.CopyToAsync(output, ct);
+            File.Move(temp, file, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+        }
+    }
 
     // ── IArchive ────────────────────────────────────────────────────────────────
 

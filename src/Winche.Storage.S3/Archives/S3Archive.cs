@@ -11,15 +11,77 @@ namespace Winche.Storage.S3.Archives;
 public sealed class S3Archive(
     IAmazonS3 s3,
     IOptions<S3ArchiveOptions> options
-) : IArchive
+) : IArchive, Winche.Storage.Locations.IArchiveContent
 {
+    // ── IArchiveContent (moving files between locations) ──────────────────────────
+
+    public async Task<Stream?> OpenReadAsync(string path, CancellationToken ct = default)
+    {
+        try
+        {
+            var response = await s3.GetObjectAsync(new GetObjectRequest { BucketName = this.options.BucketName, Key = path }, ct);
+            return new OwnedStream(response.ResponseStream, response);
+        }
+        catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound) { return null; }
+    }
+
+    public async Task WriteAsync(string path, Stream content, string? contentType, CancellationToken ct = default)
+    {
+        // S3 needs the length up front: buffer streams that can't tell it to a temporary file (large ones go in parts).
+        string? temp = null;
+        try
+        {
+            if (!content.CanSeek)
+            {
+                temp = Path.Combine(Path.GetTempPath(), $"winche-move-{Guid.NewGuid():N}");
+                await using (var file = File.Create(temp)) await content.CopyToAsync(file, ct);
+            }
+            using var transfer = new Amazon.S3.Transfer.TransferUtility(s3);
+            var request = new Amazon.S3.Transfer.TransferUtilityUploadRequest
+            {
+                BucketName = this.options.BucketName, Key = path, ContentType = contentType ?? "application/octet-stream",
+            };
+            if (temp is not null) request.FilePath = temp; else request.InputStream = content;
+            await transfer.UploadAsync(request, ct);
+        }
+        finally
+        {
+            if (temp is not null && File.Exists(temp)) File.Delete(temp);
+        }
+    }
+
+    /// <summary>The response body, disposing the response with it.</summary>
+    private sealed class OwnedStream(Stream inner, IDisposable owner) : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default) => inner.ReadAsync(buffer, ct);
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) { inner.Dispose(); owner.Dispose(); }
+            base.Dispose(disposing);
+        }
+    }
+
     private readonly S3ArchiveOptions options = options.Value;
+
+    /// <summary>Signed links follow the service's scheme: an S3-compatible service on plain http (MinIO, LocalStack) gets http links.</summary>
+    private Protocol LinkProtocol => this.options.ServiceUrl is { } u && u.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? Protocol.HTTP : Protocol.HTTPS;
 
     public Task<UploadSession> GenerateUploadUrlAsync(string path, string mimeType, long sizeBytes, CancellationToken ct = default)
     {
         var expiresAt = DateTime.UtcNow.Add(options.PresignedUrlExpiry);
         var request = new GetPreSignedUrlRequest
         {
+            Protocol = LinkProtocol,
             BucketName = options.BucketName,
             Key = path,
             Verb = HttpVerb.PUT,
@@ -40,6 +102,7 @@ public sealed class S3Archive(
         var expiresAt = DateTime.UtcNow.Add(options.PresignedUrlExpiry);
         var request = new GetPreSignedUrlRequest
         {
+            Protocol = LinkProtocol,
             BucketName = options.BucketName,
             Key = path,
             Verb = HttpVerb.GET,
@@ -157,6 +220,7 @@ public sealed class S3Archive(
         var expiresAt = DateTime.UtcNow.Add(options.PresignedUrlExpiry);
         var request = new GetPreSignedUrlRequest
         {
+            Protocol = LinkProtocol,
             BucketName = options.BucketName,
             Key = path,
             Verb = HttpVerb.PUT,

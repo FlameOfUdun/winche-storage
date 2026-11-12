@@ -66,7 +66,26 @@ public static class ServiceCollectionExtensions
                 Settings.StorageSettings.From(options, sweep, options.OrphanSweepInCode), s => s.Problems());
             area.Changed += s => s.ApplyTo(options, limits, sweep);
         }
-        services.AddSingleton<FileStorage>();
+        if (options.SettingsEnabled)
+        {
+            // Where files are kept can change from the console (a guided move): FileStorage goes through the router,
+            // and the archive registered in code (the last IArchive) is "the app's own location".
+            var locationArea = Winche.Config.ServiceCollectionExtensions.AddWincheSettingsArea(services, Locations.StorageLocationSettings.Area,
+                "File location", new Locations.StorageLocationSettings(), s => s.Problems());
+            services.AddSingleton(sp =>
+            {
+                IArchive? code = null;
+                return new Locations.ArchiveLocations(sp, () => code ??= sp.GetServices<IArchive>().Last());
+            });
+            services.AddSingleton(sp => new Locations.ArchiveRouter(locationArea, sp.GetRequiredService<Locations.ArchiveLocations>()));
+            services.AddSingleton<Locations.StorageMoves>();
+            services.AddHostedService<Locations.StorageMoveWorker>();
+            services.AddSingleton(sp => new FileStorage(
+                sp.GetRequiredKeyedService<Npgsql.NpgsqlDataSource>(WincheStorageKeys.DATA_SOURCE_KEY),
+                sp.GetRequiredService<Locations.ArchiveRouter>(), sp.GetRequiredService<HookInvocationDispatcher>(), limits));
+        }
+        else
+            services.AddSingleton<FileStorage>();
         services.AddSingleton<RuleGuardedFileStorage>(sp =>
             new RuleGuardedFileStorage(
                 sp.GetRequiredService<FileStorage>(),
