@@ -40,6 +40,22 @@ public sealed class WincheStorageOptions
     /// </summary>
     public long? MaxFileSizeBytes { get; set; }
 
+    /// <summary>What's logged about requests (<see cref="LogRequests"/>), or null when off.</summary>
+    public Logging.RequestLogOptions? RequestLog { get; private set; }
+
+    /// <summary>
+    /// Log app requests that go through the access rules (9.1.0), as structured entries in the category
+    /// <c>Winche.Storage.Requests</c> (<c>Operation</c>, <c>Path</c>, <c>Principal</c>, <c>Outcome</c>, <c>LatencyMs</c>):
+    /// denied and slow ones always (Warning), a sample of the rest (Information).
+    /// </summary>
+    public WincheStorageOptions LogRequests(Action<Logging.RequestLogOptions>? configure = null)
+    {
+        var o = new Logging.RequestLogOptions();
+        configure?.Invoke(o);
+        RequestLog = o;
+        return this;
+    }
+
     /// <summary>
     /// Rulesets registered via <see cref="UseRules(RuleSet)"/>. Collected here (not in the DI
     /// container) so <c>AddWincheStorage</c> can build an engine from this package's rules only.

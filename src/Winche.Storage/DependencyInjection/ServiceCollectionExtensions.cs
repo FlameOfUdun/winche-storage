@@ -56,7 +56,13 @@ public static class ServiceCollectionExtensions
             new RuleGuardedFileStorage(
                 sp.GetRequiredService<FileStorage>(),
                 sp.GetRequiredKeyedService<RuleEngine>(WincheStorageKeys.RULE_ENGINE_KEY),
-                () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims()));
+                () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims(),
+                options.RequestLog is { } requestLog
+                    ? new Logging.RequestLog(
+                        (sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>() ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance)
+                            .CreateLogger(Logging.RequestLog.Category),
+                        requestLog, () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims())
+                    : null));
         services.AddSingleton<IFileStorage>(sp =>
             sp.GetRequiredService<RuleGuardedFileStorage>());
 

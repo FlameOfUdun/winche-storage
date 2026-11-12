@@ -352,6 +352,15 @@ opts.MapClaims(ctx => new Dictionary<string, object?>
 For non-HTTP callers (background services, tests), inject `FileClaimsAccessor` and call
 `SetClaims(...)` directly before invoking `IFileStorage`.
 
+## Request logging (9.1.0)
+
+`opts.LogRequests()` logs app requests that go through the access rules in the category `Winche.Storage.Requests` as
+structured entries — `Operation` (`storage.create`, `storage.get`, `storage.upload`, `storage.confirm`,
+`storage.download`, `storage.list`, …), `Path`, `Principal`, `Outcome` (`ok`, `denied`, `notFound`, `invalid`) and
+`LatencyMs` — with a plain message: *"u2 was denied deleting uploads/u1/a.png: no rule allows it."* Denied and slow
+requests always (Warning), a sample of the rest (Information; `SuccessSampleRate`, default 0.1). The Winche console's
+Logs Explorer filters on them.
+
 ## Hooks
 
 Implement `FileStoreHook` (behavior only) and register it against a path with
