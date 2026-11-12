@@ -1,5 +1,3 @@
-using Winche.Rules;
-using Winche.Rules.Expressions;
 using Winche.Storage.AspNetCore.DependencyInjection;
 using Winche.Storage.AspNetCore.Rest.DependencyInjection;
 using Winche.Storage.DependencyInjection;
@@ -15,18 +13,7 @@ builder.Services.AddWincheStorage(opts =>
         builder.Configuration.GetConnectionString("DefaultConnection") ??
         throw new InvalidOperationException("No connection string found for WincheStorage.");
 
-    opts.UseRules(rb =>
-    {
-        rb.Match("userFiles/{userId}", mb =>
-        {
-            mb.Allow(RuleOperations.All, Expr.Auth("uid").Eq(Expr.Param("userId")));
-        });
-
-        rb.Match("userFiles/{userId}/{rest=**}", mb =>
-        {
-            mb.Allow(RuleOperations.All, Expr.Auth("uid").Eq(Expr.Param("userId")));
-        });
-    });
+    opts.UseRulesFile("storage.rules");
 
     opts.UseHooks(h =>
     {

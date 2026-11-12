@@ -23,7 +23,7 @@ flowchart TD
     Base["Winche.Storage.AspNetCore<br/>FileClaimsAccessor · MapClaims"]
     S3["Winche.Storage.S3<br/>UseS3Archive · S3Archive"]
     Core["Winche.Storage<br/>IFileStorage · guard · schema · hooks"]
-    Rules["Winche.Rules<br/>RuleEngine · RuleSetBuilder · Expr"]
+    Rules["Winche.Rules<br/>RuleEngine · RuleText"]
 
     Rest --> Base
     Rest --> Core
@@ -90,9 +90,8 @@ builder.Services.AddWincheStorage(opts =>
 {
     opts.ConnectionString = builder.Configuration.GetConnectionString("WincheStorage");
 
-    // Default-deny. Grant access with one or more rule blocks.
-    opts.UseRules(r => r.Match("userFiles/{userId}/{rest=**}", owned =>
-        owned.Allow(RuleOperations.All, Expr.Auth("token", "userId").Eq(Expr.Param("userId")))));
+    // Default-deny. Grant access in the rules language (see Access Control).
+    opts.UseRulesFile("storage.rules");
 
     opts.UseS3Archive(s3 => builder.Configuration.GetSection("WincheStorage:S3Archive").Bind(s3));
 
@@ -136,7 +135,7 @@ services.AddWincheStorage(opts =>
 | Member | Description |
 | --- | --- |
 | `ConnectionString` | _(required)_ Postgres connection string. Schema comes from its `Search Path`. |
-| `UseRules(...)` | Adds a `RuleSet` to the guard. Multiple calls accumulate (OR-combined). |
+| `UseRulesFile(path)` / `UseRulesText(text)` / `UseRules(RuleSet)` | Adds rules to the guard. Multiple calls accumulate (OR-combined). |
 | `UseHooks(h => h.Add<T>(path))` | Registers `FileStoreHook` lifecycle listeners, each bound to a Firestore-style path pattern. |
 | `UseOrphanSweep(...)` | Enables the background sweep that reclaims archive objects with no matching DB row. See [Orphan Sweep](#orphan-sweep). |
 
@@ -244,33 +243,34 @@ stateDiagram-v2
 
 ## Access Control
 
-Authorization is expressed as [Winche.Rules](https://github.com/FlameOfUdun/winche-rules) rule
-blocks via `opts.UseRules(...)`. Access is **default-deny**: with no matching `Allow`, every
-protected call throws `AccessDeniedException`. Multiple `UseRules` calls accumulate and are
-OR-combined.
+Authorization is written in the [Winche.Rules](https://github.com/FlameOfUdun/winche-rules) rules language
+(Firestore-style) and loaded with `opts.UseRulesFile(...)` or `opts.UseRulesText(...)`; there is no C# builder
+(9.0.0). Access is **default-deny**: with no matching `allow`, every protected call throws
+`AccessDeniedException`. Multiple calls accumulate and are OR-combined. With the Winche console's rules editor,
+the version edited there or deployed with `winche rules deploy` replaces the file's rules at startup.
 
-```csharp
-opts.UseRules(r => r
-    .Match("userFiles/{userId}/{rest=**}", owned =>
-    {
-        // Owner has full access to their own subtree.
-        owned.Allow(RuleOperations.All, Expr.Auth("token", "userId").Eq(Expr.Param("userId")));
-    })
-    .Match("public/{rest=**}", pub =>
-    {
-        // Anyone may read public files.
-        pub.Allow(RuleOperations.Read, Expr.Const(true));
-    }));
+```text
+// storage.rules
+match userFiles/{userId}/{rest=**} {
+  // Owner has full access to their own subtree.
+  allow read, write: if request.auth.token.userId == userId;
+}
+
+match public/{rest=**} {
+  // Anyone may read public files.
+  allow read;
+}
 ```
 
-- Path patterns use `{param}` single-segment captures and a trailing `{name=**}` recursive capture,
-  readable in conditions via `Expr.Param("param")`.
-- Operations: `RuleOperations.Read` (get + list), `RuleOperations.Write` (create + update + delete),
-  `RuleOperations.All`, or individual `RuleOperation` values.
-- The existing file is exposed to conditions as `resource` — e.g. `Expr.Resource("mimeType")`,
-  `Expr.Resource("sizeBytes")`, `Expr.Resource("metadata", "ownerId")`.
-- Caller claims are exposed under `request.auth`: `Expr.Auth("uid")` (the `uid` claim, if any) and
-  `Expr.Auth("token", "<claim>")` (any mapped claim).
+- Path patterns use `{param}` single-segment captures and a `{name=**}` recursive capture, readable in
+  conditions by name (`userId`).
+- Operations: `read` (get + list), `write` (create + update + delete), or `get`, `list`, `create`, `update`,
+  `delete`.
+- The existing file is exposed to conditions as `resource` — e.g. `resource.mimeType`, `resource.sizeBytes`,
+  `resource.metadata.ownerId`.
+- Caller claims are exposed under `request.auth`: `request.auth.uid` (the `uid` claim, if any) and
+  `request.auth.token.<claim>` (any mapped claim).
+- A missing file or a syntax error fails at startup, naming the file, line and column.
 
 ### Hot-swapping rules at runtime
 
@@ -280,17 +280,16 @@ be replaced without restarting the app. The write side is registered as a keyed
 
 ```csharp
 using Winche.Rules;
-using Winche.Rules.Expressions;
+using Winche.Rules.Text;
 using Winche.Storage.Constants;
 
 var repo = provider.GetRequiredKeyedService<IMutableRuleSetRepository>(WincheStorageKeys.RULE_ENGINE_KEY);
-repo.Update(RuleSetBuilder.Build(r => r.Match("public/{rest=**}", pub =>
-    pub.Allow(RuleOperations.Read, Expr.Const(true)))));
+repo.Update(RuleText.ParseRuleSet("match public/{rest=**} { allow read; }"));
 ```
 
 The swap is a lock-free atomic reference write: in-flight evaluations keep the ruleset they started
 with, and the next call observes the new rules. `Update` replaces the whole ruleset — build the full
-set you want live (it is not merged with the `UseRules` blocks registered at startup).
+set you want live (it is not merged with the rules registered at startup).
 
 Storage operations map to rule operations as follows:
 
