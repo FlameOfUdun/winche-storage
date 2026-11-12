@@ -7,6 +7,9 @@ namespace Winche.Storage.DependencyInjection;
 /// </summary>
 public sealed class OrphanSweepOptions
 {
+    /// <summary>Whether it runs (the console can turn it on and off).</summary>
+    public bool Enabled { get; set; } = true;
+
     /// <summary>How often the sweep runs. Default: every 6 hours.</summary>
     public TimeSpan Interval { get; set; } = TimeSpan.FromHours(6);
 

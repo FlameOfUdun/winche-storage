@@ -41,7 +41,23 @@ public sealed class WincheStorageOptions
     public long? MaxFileSizeBytes { get; set; }
 
     /// <summary>What's logged about requests (<see cref="LogRequests"/>), or null when off.</summary>
-    public Logging.RequestLogOptions? RequestLog { get; private set; }
+    public Logging.RequestLogOptions? RequestLog { get; internal set; }
+
+    /// <summary>
+    /// Lets the console change the file size limit, request logging and the orphan sweep without a deploy (9.1.0);
+    /// what's set here becomes the starting values. Needs <c>AddWincheConfig(…)</c> to save changes.
+    /// </summary>
+    public WincheStorageOptions UseSettings()
+    {
+        SettingsEnabled = true;
+        return this;
+    }
+
+    /// <summary>Whether the console may change these settings (<see cref="UseSettings"/>).</summary>
+    public bool SettingsEnabled { get; private set; }
+
+    /// <summary>Whether <see cref="UseOrphanSweep"/> was called in code.</summary>
+    internal bool OrphanSweepInCode { get; private set; }
 
     /// <summary>
     /// Log app requests that go through the access rules (9.1.0), as structured entries in the category
@@ -121,7 +137,7 @@ public sealed class WincheStorageOptions
     public WincheStorageOptions UseOrphanSweep(Action<OrphanSweepOptions>? configure = null)
     {
         Services.Configure(configure ?? (_ => { }));
-        Services.AddHostedService<Services.OrphanSweepService>();
+        OrphanSweepInCode = true;
         return this;
     }
 }

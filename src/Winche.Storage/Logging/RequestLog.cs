@@ -20,8 +20,10 @@ public sealed class RequestLogOptions
 /// <c>Operation</c>, <c>Path</c>, <c>Principal</c>, <c>Outcome</c>, <c>LatencyMs</c> — with a plain message. Denied and
 /// slow requests always (Warning); a sample of successful ones (Information).
 /// </summary>
-internal sealed class RequestLog(ILogger logger, RequestLogOptions options, Func<IReadOnlyDictionary<string, object?>?> claims)
+internal sealed class RequestLog(ILogger logger, Func<RequestLogOptions?> current, Func<IReadOnlyDictionary<string, object?>?> claims)
 {
+    public RequestLog(ILogger logger, RequestLogOptions options, Func<IReadOnlyDictionary<string, object?>?> claims) : this(logger, () => options, claims) { }
+
     public const string Category = "Winche.Storage.Requests";
 
     public async Task<T> RunAsync<T>(string operation, string path, Func<Task<T>> body)
@@ -53,6 +55,7 @@ internal sealed class RequestLog(ILogger logger, RequestLogOptions options, Func
     private void Done(string operation, string path, string outcome, Stopwatch watch)
     {
         var ms = watch.ElapsedMilliseconds;
+        if (current() is not { } options) return;   // logging turned off
         var slow = ms >= options.SlowThreshold.TotalMilliseconds;
         var level = outcome is "ok" or "notFound" && !slow ? LogLevel.Information : LogLevel.Warning;
         if (!logger.IsEnabled(level)) return;

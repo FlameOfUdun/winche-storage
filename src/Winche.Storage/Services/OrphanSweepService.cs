@@ -23,11 +23,14 @@ internal sealed class OrphanSweepService(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var opts = options.Value;
-        using var timer = new PeriodicTimer(opts.Interval);
-
-        while (await timer.WaitForNextTickAsync(stoppingToken))
+        // Settings are read each round: the console can change the interval or turn the sweep off.
+        while (!stoppingToken.IsCancellationRequested)
         {
+            var opts = options.Value;
+            try { await Task.Delay(opts.Interval > TimeSpan.Zero ? opts.Interval : TimeSpan.FromHours(6), stoppingToken); }
+            catch (OperationCanceledException) { break; }
+            if (!options.Value.Enabled) continue;
+            opts = options.Value;
             try
             {
                 await using var lease = await AdvisoryLease.TryAcquireAsync(source, "storage-orphan-sweep", TimeSpan.FromSeconds(30), stoppingToken);

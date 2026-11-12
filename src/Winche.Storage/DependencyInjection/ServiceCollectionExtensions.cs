@@ -50,18 +50,33 @@ public static class ServiceCollectionExtensions
 
         // Guarded-by-default: IFileStorage resolves to the rules guard. The concrete FileStorage is the
         // unguarded core — inject it directly for trusted server-side callers that have no caller claims.
-        services.AddSingleton(new StorageLimits(options.MaxFileSizeBytes));
+        var limits = new StorageLimits(options.MaxFileSizeBytes);
+        services.AddSingleton(limits);
+        if (options.OrphanSweepInCode || options.SettingsEnabled) services.AddHostedService<Services.OrphanSweepService>();
+        if (options.SettingsEnabled)
+        {
+            // The console may change these: the code's values are where they start. The sweep's options are read
+            // from DI once it's built; until then the code's sweep settings stand.
+            var sweep = new OrphanSweepOptions { Enabled = options.OrphanSweepInCode };
+            foreach (var d in services.Where(d => d.ServiceType == typeof(Microsoft.Extensions.Options.IConfigureOptions<OrphanSweepOptions>)).ToList())
+                (d.ImplementationInstance as Microsoft.Extensions.Options.IConfigureOptions<OrphanSweepOptions>)?.Configure(sweep);
+            sweep.Enabled = options.OrphanSweepInCode;
+            services.AddSingleton<Microsoft.Extensions.Options.IOptions<OrphanSweepOptions>>(Microsoft.Extensions.Options.Options.Create(sweep));
+            var area = Winche.Config.ServiceCollectionExtensions.AddWincheSettingsArea(services, Settings.StorageSettings.Area, "Storage",
+                Settings.StorageSettings.From(options, sweep, options.OrphanSweepInCode), s => s.Problems());
+            area.Changed += s => s.ApplyTo(options, limits, sweep);
+        }
         services.AddSingleton<FileStorage>();
         services.AddSingleton<RuleGuardedFileStorage>(sp =>
             new RuleGuardedFileStorage(
                 sp.GetRequiredService<FileStorage>(),
                 sp.GetRequiredKeyedService<RuleEngine>(WincheStorageKeys.RULE_ENGINE_KEY),
                 () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims(),
-                options.RequestLog is { } requestLog
+                options.RequestLog is not null || options.SettingsEnabled
                     ? new Logging.RequestLog(
                         (sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>() ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance)
                             .CreateLogger(Logging.RequestLog.Category),
-                        requestLog, () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims())
+                        () => options.RequestLog, () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims())
                     : null));
         services.AddSingleton<IFileStorage>(sp =>
             sp.GetRequiredService<RuleGuardedFileStorage>());

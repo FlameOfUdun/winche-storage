@@ -1,7 +1,11 @@
 namespace Winche.Storage.Models;
 
 /// <summary>Size limits enforced by <see cref="Services.FileStorage"/>; set through <c>WincheStorageOptions</c>.</summary>
-public sealed record StorageLimits(long? MaxFileSizeBytes);
+public sealed record StorageLimits(long? MaxFileSizeBytes)
+{
+    /// <summary>The largest file allowed, or null for no limit. Changes from the console apply to the next upload.</summary>
+    public long? MaxFileSizeBytes { get; internal set; } = MaxFileSizeBytes;
+}
 
 /// <summary>A file was declared larger than <see cref="StorageLimits.MaxFileSizeBytes"/> (or with a negative size).</summary>
 public sealed class FileTooLargeException(string path, long sizeBytes, long? maxBytes)
