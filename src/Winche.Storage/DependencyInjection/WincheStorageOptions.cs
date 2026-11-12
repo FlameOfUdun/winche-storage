@@ -56,10 +56,25 @@ public sealed class WincheStorageOptions
         return this;
     }
 
-    /// <summary>Builds a <see cref="RuleSet"/> from a builder delegate and adds it to the merged set.</summary>
-    public WincheStorageOptions UseRules(Action<RuleSetBuilder> configure)
+    /// <summary>
+    /// Parses <paramref name="rules"/> (the rules language, as in the console's editor) and adds it like
+    /// <see cref="UseRules(RuleSet)"/>. A syntax error throws here, at startup.
+    /// </summary>
+    public WincheStorageOptions UseRulesText(string rules)
     {
-        Rulesets.Add(RuleSetBuilder.Build(configure));
+        ArgumentNullException.ThrowIfNull(rules);
+        Rulesets.Add(RuleFiles.Parse(rules, source: null));
+        return this;
+    }
+
+    /// <summary>
+    /// Reads and parses a rules file (e.g. <c>storage.rules</c>) and adds it like <see cref="UseRules(RuleSet)"/>.
+    /// A relative <paramref name="path"/> is resolved against <see cref="AppContext.BaseDirectory"/>. A missing
+    /// file or a syntax error throws here, at startup, naming the file, line and column.
+    /// </summary>
+    public WincheStorageOptions UseRulesFile(string path)
+    {
+        Rulesets.Add(RuleFiles.Load(path));
         return this;
     }
 

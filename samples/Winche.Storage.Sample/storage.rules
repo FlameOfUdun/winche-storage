@@ -1,0 +1,8 @@
+// Deployed with `winche rules deploy` in a real app; loaded from this file for the sample.
+match userFiles/{userId} {
+  allow read, write: if request.auth.uid == userId;
+}
+
+match userFiles/{userId}/{rest=**} {
+  allow read, write: if request.auth.uid == userId;
+}
