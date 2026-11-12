@@ -10,6 +10,7 @@ Access control is enforced with [Winche.Rules](https://github.com/FlameOfUdun/wi
 | --- | --- |
 | `Winche.Storage` | Core: schema management, file CRUD, hooks, Winche.Rules guard |
 | `Winche.Storage.S3` | S3-compatible archive provider (presigned URLs, multipart upload) |
+| `Winche.Storage.FileSystem` | A folder on disk (or a mounted volume) as the archive, through signed URLs your app serves (9.1.0) |
 | `Winche.Storage.AspNetCore` | ASP.NET Core base: HTTP-context claims mapping (`MapClaims`) |
 | `Winche.Storage.AspNetCore.Rest` | Minimal-API REST endpoints (depends on the base package) |
 
@@ -351,6 +352,56 @@ opts.MapClaims(ctx => new Dictionary<string, object?>
 
 For non-HTTP callers (background services, tests), inject `FileClaimsAccessor` and call
 `SetClaims(...)` directly before invoking `IFileStorage`.
+
+## Where the bytes live
+
+Winche.Storage keeps each file's record (path, type, size, metadata, upload state) in PostgreSQL and its **bytes in an
+archive** — `IArchive`. Clients never send bytes through the API: they get a short-lived URL from the archive and upload
+or download straight to and from it. Pick an archive, or write one.
+
+### S3 and S3-compatible stores
+
+`opts.UseS3Archive(s3 => …)` (`Winche.Storage.S3`): AWS S3, MinIO, Cloudflare R2, Backblaze B2, Wasabi, …
+
+### A folder on disk (9.1.0)
+
+```csharp
+builder.Services.AddWincheStorage(opts =>
+{
+    opts.ConnectionString = connectionString;
+    opts.UseFileSystemArchive(fs =>
+    {
+        fs.Root = "/var/lib/myapp/files";                          // a local disk, a mounted volume, a network share
+        fs.SigningKey = builder.Configuration["Files:SigningKey"]; // 32+ characters; the same on every instance
+        fs.PublicBaseUrl = "https://api.example.com";              // optional: the request's own address otherwise
+    });
+});
+
+app.MapWincheStorageFileSystem();   // serves the URLs, under /_files
+```
+
+Upload and download URLs point at your app and are **signed** (HMAC-SHA256): each works only for its method and path,
+an upload only up to the size the file was registered with, and only until it expires (an hour by default). Uploads land
+in a temporary file and appear whole or not at all; downloads support ranges; multipart uploads work as with S3, each
+part capped at `MaxPartBytes`. Several instances can share the folder if it's on shared storage. Browser apps on another
+origin need CORS on the `/_files` routes, as they would on an S3 bucket.
+
+### Your own
+
+Implement `IArchive` and register it (`services.AddSingleton<IArchive, MyArchive>()` after `AddWincheStorage`). What it
+promises:
+
+| Member | |
+| --- | --- |
+| `GenerateUploadUrlAsync(path, mimeType, size)` | a URL the client `PUT`s the whole file to (respond with an `ETag`) |
+| `GenerateDownloadUrlAsync(path)` | a URL the client `GET`s it from |
+| `GetObjectETagAsync(path)` | the stored object's ETag, or null if there's none: confirming an upload checks it |
+| `DeleteAsync`, `DeleteObjectsAsync` | remove objects (a missing one isn't an error) |
+| `ListObjectsAsync(prefix)` | every object and when it changed, for the orphan sweep |
+| `CreateMultipartUploadAsync`, `SignPartAsync`, `ListPartsAsync`, `CompleteMultipartUploadAsync`, `AbortMultipartUploadAsync` | multipart uploads: a URL per part, then assembly in part order |
+
+Anything that can hand out a URL works — another cloud's signed URLs (Azure SAS, Google Cloud Storage), or endpoints in
+your own app as `Winche.Storage.FileSystem` does (its source is a complete example).
 
 ## Request logging (9.1.0)
 
