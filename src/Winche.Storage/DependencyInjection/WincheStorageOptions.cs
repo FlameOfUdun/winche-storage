@@ -156,6 +156,24 @@ public sealed class HookBuilder(IServiceCollection services)
     /// Registers a hook <typeparamref name="THook"/> (constructed via DI, so constructor injection
     /// works) bound to <paramref name="path"/>. The same hook type may be bound to multiple paths.
     /// </summary>
+    /// <summary>
+    /// Registers a before hook <typeparamref name="THook"/> (built by DI) for files at <paramref name="path"/>: it runs in
+    /// every matching write's transaction and may refuse it or change its metadata (see <see cref="Abstraction.FileBeforeHook"/>).
+    /// </summary>
+    public HookBuilder Before<THook>(string path) where THook : Abstraction.FileBeforeHook
+    {
+        services.TryAddSingleton<THook>();
+        services.AddSingleton(sp => new Abstraction.FileBeforeHookRegistration(path, sp.GetRequiredService<THook>()));
+        return this;
+    }
+
+    /// <summary>Registers a before hook instance for files at <paramref name="path"/>.</summary>
+    public HookBuilder Before(string path, Abstraction.FileBeforeHook hook)
+    {
+        services.AddSingleton(new Abstraction.FileBeforeHookRegistration(path, hook));
+        return this;
+    }
+
     public HookBuilder Add<THook>(string path) where THook : Abstraction.FileStoreHook
     {
         Winche.PathPattern.Parse(path);   // a bad pattern fails here, at startup, not in every file change

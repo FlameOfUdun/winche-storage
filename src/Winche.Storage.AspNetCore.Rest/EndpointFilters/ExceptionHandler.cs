@@ -17,6 +17,7 @@ internal class ExceptionHandler(ILogger<ExceptionHandler> logger) : WincheErrorF
     internal static WincheError? Known(Exception ex) => ex switch
     {
         StorageException se => se.Error,
+        WincheDeniedException denied => denied.Error,   // the app's own code (a before hook) refused it
         AccessDeniedException => new WincheError(WincheErrorCode.PermissionDenied, ex.Message),
         FileRecordNotFoundException => new WincheError(WincheErrorCode.NotFound, ex.Message),
         FileTooLargeException => new WincheError(WincheErrorCode.InvalidArgument, ex.Message, "too-large"),

@@ -35,7 +35,7 @@ internal sealed class RequestLog(ILogger logger, Func<RequestLogOptions?> curren
             Done(operation, path, result is null ? "notFound" : "ok", watch);
             return result;
         }
-        catch (AccessDeniedException)
+        catch (Exception ex) when (ex is AccessDeniedException or WincheDeniedException)
         {
             Done(operation, path, "denied", watch);
             throw;

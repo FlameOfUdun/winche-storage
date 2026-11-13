@@ -36,6 +36,9 @@ public sealed class FileStorage : IFileStorage
         this.limits = limits;
     }
 
+    /// <summary>The app's before hooks (refuse or change a write), run in its transaction after any rules check.</summary>
+    internal Abstraction.FileBeforeHooks? BeforeHooks { get; init; }
+
     public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null,
         FilePrecondition? precondition = null, FileHeaders? headers = null, CancellationToken ct = default) =>
         SetAsync(path, mimeType, sizeBytes, metadata, precondition, headers, null, ct);
@@ -59,6 +62,16 @@ public sealed class FileStorage : IFileStorage
             precondition?.Check(path, before);
             if (check is not null)
                 await check(before is null ? RuleOperation.Create : RuleOperation.Update, before, Proposed(path, mimeType, sizeBytes, metadata, headers, before), ct);
+            if (BeforeHooks is { } hooks)
+            {
+                var proposed = Proposed(path, mimeType, sizeBytes, metadata, headers, before);
+                if (await hooks.RunAsync(path, before is null ? Abstraction.FileOperation.Create : Abstraction.FileOperation.Update, before,
+                        mimeType, sizeBytes, proposed.MetaData, proposed.ContentDisposition, proposed.CacheControl, ct) is { } w)
+                {
+                    metadata = w.Metadata;
+                    headers = new FileHeaders(w.ContentDisposition ?? "", w.CacheControl ?? "");
+                }
+            }
             var op = new InsertFileOperation(conn, tx);
             if (before is null)
                 return await op.InsertAsync(path, mimeType, sizeBytes, metadata, headers, ct)
@@ -158,6 +171,9 @@ public sealed class FileStorage : IFileStorage
                 UpdatedAt = DateTime.UtcNow,
             };
             if (check is not null) await check(RuleOperation.Update, before, after, ct);
+            if (BeforeHooks is { } hooks && await hooks.RunAsync(path, Abstraction.FileOperation.Update, before, before.MimeType, before.SizeBytes,
+                    after.MetaData, after.ContentDisposition, after.CacheControl, ct) is { } w)
+                after = after with { MetaData = w.Metadata!, ContentDisposition = w.ContentDisposition, CacheControl = w.CacheControl };
             return await new UpdateMetadataOperation(conn, tx).ExecuteAsync(path, before.Version, after.MetaData, after.ContentDisposition, after.CacheControl, ct)
                 ?? throw StorageException.Changed(path);
         }, ct);
@@ -191,6 +207,9 @@ public sealed class FileStorage : IFileStorage
                 if (files.Count == 0) await check(RuleOperation.Delete, null, null, ct);
                 foreach (var file in files) await check(RuleOperation.Delete, file, null, ct);
             }
+            if (BeforeHooks is { } hooks)
+                foreach (var file in files)
+                    await hooks.RunAsync(file.Path, Abstraction.FileOperation.Delete, file, null, null, null, null, null, ct);
             if (files.Count == 0) return false;
             deleted = await op.ExecuteAsync([.. files.Select(f => f.Path)], ct);
             files = [.. files.Where(f => deleted.Contains(f.Path))];

@@ -502,6 +502,35 @@ public class AuditHook : FileStoreHook
 
 Register: `opts.UseHooks(h => h.Add<AuditHook>("userFiles/{userId}/{file=**}"))`.
 
+## Before hooks
+
+A `FileBeforeHook` runs **before** a file write is saved, inside its transaction, after the access rules allowed it, for
+callers' writes and the app's own: registering a file (new or a replacement), changing its metadata, deleting it (and
+each file under a deleted directory). It can refuse the write, or change the metadata and headers saved; never the bytes.
+
+```csharp
+public sealed class Scans : FileBeforeHook
+{
+    public override Task OnBeforeWriteAsync(FileWrite write, CancellationToken ct)
+    {
+        if (write.Before?.MetaData["locked"]?.GetValue<bool>() == true) write.Deny("This file is locked.");
+        if (write.Operation != FileOperation.Delete)
+        {
+            write.Metadata!["owner"] = write.Uid ?? "server";
+            write.CacheControl = "private, max-age=60";
+        }
+        return Task.CompletedTask;
+    }
+}
+
+o.UseHooks(h => h.Before<Scans>("scans/{rest=**}"));
+```
+
+`Operation`, `Before`, `MimeType`, `SizeBytes`, `Metadata` (this write's own copy, change it in place),
+`ContentDisposition`, `CacheControl`, `Caller` / `Uid`. A refusal answers `permissionDenied` with your message
+(`reason: "denied"`), and a directory delete with one refusal deletes nothing. Keep it quick: side effects belong in a
+`FileStoreHook`, which runs after the commit.
+
 ## Metrics and health
 
 The meter `Winche.Storage` (`WincheStorageMetrics.MeterName`, for OpenTelemetry `.AddMeter(...)`) counts

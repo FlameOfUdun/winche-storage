@@ -85,7 +85,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp => new FileStorage(
             sp.GetRequiredKeyedService<Npgsql.NpgsqlDataSource>(WincheStorageKeys.DATA_SOURCE_KEY),
             options.SettingsEnabled ? sp.GetRequiredService<Locations.ArchiveRouter>() : sp.GetRequiredService<IArchive>(),
-            sp.GetRequiredService<HookInvocationDispatcher>(), limits));
+            sp.GetRequiredService<HookInvocationDispatcher>(), limits)
+        {
+            BeforeHooks = sp.GetServices<Abstraction.FileBeforeHookRegistration>().ToList() is { Count: > 0 } before
+                ? new Abstraction.FileBeforeHooks(before, () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims())
+                : null,
+        });
         services.AddSingleton<RuleGuardedFileStorage>(sp =>
             new RuleGuardedFileStorage(
                 sp.GetRequiredService<FileStorage>(),
