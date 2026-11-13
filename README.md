@@ -11,7 +11,7 @@ Access control is enforced with [Winche.Rules](https://github.com/FlameOfUdun/wi
 | `Winche.Storage` | Core: schema management, file CRUD, hooks, Winche.Rules guard |
 | `Winche.Storage.S3` | S3-compatible archive provider (presigned URLs, multipart upload) |
 | `Winche.Storage.FileSystem` | A folder on disk (or a mounted volume) as the archive, through signed URLs your app serves (9.1.0) |
-| `Winche.Storage.AspNetCore` | ASP.NET Core base: HTTP-context claims mapping (`MapClaims`) |
+| `Winche.Storage.AspNetCore` | ASP.NET Core base: `MapClaims`, a storage-specific override of the caller the host sets once for every Winche package (`AddWincheCaller` + `UseWincheCaller`, Winche.Core.AspNetCore) |
 | `Winche.Storage.AspNetCore.Rest` | Minimal-API REST endpoints (depends on the base package) |
 
 ## Architecture
