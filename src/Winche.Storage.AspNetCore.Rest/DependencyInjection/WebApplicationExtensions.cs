@@ -18,7 +18,7 @@ public static class WebApplicationExtensions
     /// <see cref="IEndpointConventionBuilder"/> over every endpoint; apply cross-cutting policy on it.
     /// The built-in claims/exception filters are always applied internally and run outermost.
     /// </summary>
-    public static IEndpointConventionBuilder MapWincheStorageRestApi(this WebApplication app, string prefix = "files")
+    public static IEndpointConventionBuilder MapWincheStorageRestApi(this WebApplication app, string prefix = "files/v1")
     {
         var p = prefix.TrimStart('/');
         var group = app.MapGroup($"/{p}");

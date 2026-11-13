@@ -198,7 +198,7 @@ decodes the base64url path and calls `IFileStorage`:
 
 ```mermaid
 flowchart LR
-    Req["HTTP<br/>/files/{base64url}:verb"] --> CA["ClaimsAccessor<br/>SetClaims(HttpContext)"]
+    Req["HTTP<br/>/files/v1/{base64url}:verb"] --> CA["ClaimsAccessor<br/>SetClaims(HttpContext)"]
     CA --> EH["ExceptionHandler"]
     EH --> Handler["handler<br/>DecodePath → IFileStorage"]
     Handler --> Ok["Results.Json"]
