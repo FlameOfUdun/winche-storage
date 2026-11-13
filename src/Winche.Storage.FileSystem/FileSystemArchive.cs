@@ -21,9 +21,12 @@ public sealed class FileSystemArchive : IArchive, Winche.Storage.Locations.IArch
     private readonly TimeProvider _time;
     private readonly byte[] _key;
 
-    public FileSystemArchive(IOptions<FileSystemArchiveOptions> options, IHttpContextAccessor http, TimeProvider time)
+    public FileSystemArchive(IOptions<FileSystemArchiveOptions> options, IHttpContextAccessor http, TimeProvider time,
+        Winche.Core.WincheKeys? masterKeys = null)
     {
         _options = options.Value;
+        // No key of its own: the one Winche.Core derives from the project's master key (as Winche Server always used).
+        if (string.IsNullOrEmpty(_options.SigningKey) && masterKeys?.TryDerive("file-links") is { } derived) _options.SigningKey = derived;
         _options.Validate();
         _http = http;
         _time = time;

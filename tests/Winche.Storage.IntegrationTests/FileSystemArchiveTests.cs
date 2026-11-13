@@ -149,4 +149,16 @@ public sealed class FileSystemArchiveTests(PostgresFixture fixture) : IClassFixt
         var download = await storage.GenerateDownloadUrlAsync("reports/r1.pdf");
         Assert.Equal(bytes, await _http.GetByteArrayAsync(Rel(download.Url)));
     }
+
+    [Fact]
+    public void Without_a_key_of_its_own_it_signs_with_the_master_key()
+    {
+        var keys = new Winche.Core.WincheKeys(new string('m', 40));
+        var options = new FileSystemArchiveOptions { Root = Path.Combine(Path.GetTempPath(), "winche-fs-" + Guid.NewGuid().ToString("N")) };
+        _ = new FileSystemArchive(Options.Create(options), new HttpContextAccessor(), TimeProvider.System, keys);
+        Assert.Equal(keys.Derive("file-links"), options.SigningKey);
+        Assert.Throws<InvalidOperationException>(() => new FileSystemArchive(
+            Options.Create(new FileSystemArchiveOptions { Root = options.Root }), new HttpContextAccessor(), TimeProvider.System));
+        Directory.Delete(options.Root, recursive: true);
+    }
 }

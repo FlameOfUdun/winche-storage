@@ -8,7 +8,8 @@ public sealed class FileSystemArchiveOptions
 
     /// <summary>
     /// The secret that signs upload and download URLs (32+ characters, from configuration or a secret store). Every
-    /// instance serving the files needs the same one.
+    /// instance serving the files needs the same one. When not set, the key Winche.Core derives from the project's
+    /// master key (<c>AddWincheConfig(o =&gt; o.MasterKey = …)</c>) is used.
     /// </summary>
     public string SigningKey { get; set; } = "";
 
@@ -30,7 +31,8 @@ public sealed class FileSystemArchiveOptions
     internal void Validate()
     {
         if (string.IsNullOrWhiteSpace(Root)) throw new InvalidOperationException("FileSystemArchive: set Root, the folder files live in.");
-        if (SigningKey.Length < 32) throw new InvalidOperationException("FileSystemArchive: SigningKey must be at least 32 characters.");
+        if (SigningKey.Length < 32)
+            throw new InvalidOperationException("FileSystemArchive: set SigningKey (32+ characters), or the project's master key in AddWincheConfig.");
         if (!RoutePrefix.StartsWith('/') || RoutePrefix.EndsWith('/')) throw new InvalidOperationException("FileSystemArchive: RoutePrefix looks like /_files.");
         if (PublicBaseUrl is not null && !Uri.TryCreate(PublicBaseUrl, UriKind.Absolute, out _))
             throw new InvalidOperationException("FileSystemArchive: PublicBaseUrl must be an absolute address.");
