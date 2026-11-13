@@ -48,13 +48,15 @@ public class DeleteAndPurgeTests(PostgresFixture fixture) : IClassFixture<Postgr
         await storage.SetAsync("a/b/y.txt", "text/plain", 1);
         await storage.SetAsync("other.txt", "text/plain", 1);
 
+        string[] keys = [(await storage.GetAsync("a/x.txt"))!.UploadKey!, (await storage.GetAsync("a/b/y.txt"))!.UploadKey!];
+
         var result = await storage.DeleteAsync("a");
 
         Assert.True(result);
         Assert.Null(await storage.GetAsync("a/x.txt"));
         Assert.Null(await storage.GetAsync("a/b/y.txt"));
         Assert.NotNull(await storage.GetAsync("other.txt"));
-        Assert.Equal(["a/b/y.txt", "a/x.txt"], archive.DeletedKeys.OrderBy(k => k, StringComparer.Ordinal));
+        Assert.Equal(keys.Order(StringComparer.Ordinal), archive.DeletedKeys.Order(StringComparer.Ordinal));   // each file's own keys
     }
 
     [Fact]
@@ -62,17 +64,18 @@ public class DeleteAndPurgeTests(PostgresFixture fixture) : IClassFixture<Postgr
     {
         var archive = new FakeArchive();
         var storage = NewStorage(archive);
-        await storage.SetAsync("keep.txt", "text/plain", 1);
+        var kept = (await storage.SetAsync("keep.txt", "text/plain", 1)).UploadKey!;
 
         var old = DateTime.UtcNow.AddHours(-2);
         var fresh = DateTime.UtcNow;
         archive.Objects.Add(new ArchivedObject("orphan-old.txt", old));     // no row + old   => purge
-        archive.Objects.Add(new ArchivedObject("keep.txt", old));           // has row        => keep
+        archive.Objects.Add(new ArchivedObject(kept, old));                 // a file's key   => keep
+        archive.Objects.Add(new ArchivedObject("keep.txt", old));           // the path isn't a key => purge
         archive.Objects.Add(new ArchivedObject("orphan-fresh.txt", fresh)); // within grace   => keep
 
         var purged = await storage.PurgeOrphansAsync(prefix: null, graceWindow: TimeSpan.FromHours(1));
 
-        Assert.Equal(1, purged);
-        Assert.Equal(["orphan-old.txt"], archive.DeletedKeys);
+        Assert.Equal(2, purged);
+        Assert.Equal(["orphan-old.txt", "keep.txt"], archive.DeletedKeys);
     }
 }

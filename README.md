@@ -213,8 +213,14 @@ stored size against the declared one, and only completes the file it checked: if
 meanwhile it fails with `aborted`.
 
 **Paths** have one accepted form: segments joined by single `/` (no leading, trailing or doubled `/`), no `.` or `..`
-segments, no `\` or control characters, at most 1,024 bytes. Anything else is `invalid-argument` (reason
+segments, no `\` or control characters, at most 1,000 bytes. Anything else is `invalid-argument` (reason
 `invalid-path`), so rules, the database and every archive agree on which file a path means.
+
+**Archive keys.** Bytes aren't stored at the file's path: each registration uploads to a key of its own, the folder, a
+random generation, then the name (`users/u1/7f3a9c2e41b05d68/photo.jpg`). Confirming makes it the file's key and
+deletes the bytes it replaced. So replacing a file never overwrites bytes in place, an old upload link only reaches a key
+nothing reads (the orphan sweep removes what it wrote), and a file deleted and created again shares nothing with the
+old one. Files stored before keep their path as their key.
 
 ```mermaid
 sequenceDiagram
@@ -410,6 +416,7 @@ promises:
 | `HeadAsync(path)` | the stored object's size and ETag, or null if there's none: confirming an upload checks both |
 | `DeleteAsync`, `DeleteObjectsAsync` | remove objects (a missing one isn't an error) |
 | `ListObjectsAsync(prefix)` | every object and when it changed, for the orphan sweep |
+| `IAbandonedUploads.DropAbandonedUploadsAsync` (optional) | drop unfinished multipart uploads, for archives that keep them |
 | `CreateMultipartUploadAsync`, `SignPartAsync`, `ListPartsAsync`, `CompleteMultipartUploadAsync`, `AbortMultipartUploadAsync` | multipart uploads: a URL per part, then assembly in part order |
 
 Anything that can hand out a URL works — another cloud's signed URLs (Azure SAS, Google Cloud Storage), or endpoints in
@@ -469,7 +476,9 @@ deletes the archive object best-effort. If the archive call fails, the row is st
 object is left as a harmless **orphan** rather than rolling the delete back (which would leave an
 undeletable record). Archive deletes never throw out of `DeleteAsync`.
 
-The background **orphan sweep** reclaims those leftovers. Enable it with `UseOrphanSweep` (requires a
+The background **orphan sweep** reclaims those leftovers, plus whatever reached a key no file uses (an old upload link),
+and multipart uploads nobody finished on archives that keep them (`IAbandonedUploads`: the folder archive; on S3 use a
+bucket lifecycle rule). Enable it with `UseOrphanSweep` (requires a
 real archive such as `UseS3Archive`):
 
 ```csharp

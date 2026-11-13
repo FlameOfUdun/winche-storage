@@ -53,8 +53,14 @@ public sealed class FileStorage(
             return await op.ReplaceAsync(path, before.Version, mimeType, sizeBytes, metadata, ct) ?? throw StorageException.Changed(path);
         }, ct);
 
-        // The replaced file's unfinished multipart upload can never complete it now.
-        if (before?.UploadId is { } stale) await BestEffortAsync(() => archive.AbortMultipartUploadAsync(path, stale, ct));
+        // The replaced registration's upload can never complete it now: its multipart upload and any bytes already sent
+        // to its key are dropped. Confirmed bytes stay until the new upload is confirmed.
+        if (before?.UploadKey is { } staleKey)
+            await BestEffortAsync(async () =>
+            {
+                if (before.UploadId is { } stale) await archive.AbortMultipartUploadAsync(staleKey, stale, ct);
+                await archive.DeleteObjectsAsync([staleKey], ct);
+            });
         return record!;
     }
 
@@ -158,6 +164,7 @@ public sealed class FileStorage(
             }
             if (files.Count == 0) return false;
             deleted = await op.ExecuteAsync([.. files.Select(f => f.Path)], ct);
+            files = [.. files.Where(f => deleted.Contains(f.Path))];
             foreach (var p in deleted)
                 await HookOutbox.AddAsync(conn, tx, hookDispatcher.Registrations, HookEventKind.Deleted, p, null, ct);
             await tx.CommitAsync(ct);
@@ -172,9 +179,10 @@ public sealed class FileStorage(
         await BestEffortAsync(async () =>
         {
             foreach (var file in files)
-                if (file.UploadStatus == UploadStatus.Pending && file.UploadId is not null)
-                    await archive.AbortMultipartUploadAsync(file.Path, file.UploadId, ct);
-            await archive.DeleteObjectsAsync(deleted, ct);
+                if (file is { UploadKey: { } key, UploadId: { } uploadId })
+                    await archive.AbortMultipartUploadAsync(key, uploadId, ct);
+            // Each key belongs to this file alone, so nothing re-created at the path meanwhile can be hit.
+            await archive.DeleteObjectsAsync([.. files.SelectMany(f => new[] { f.ObjectKey, f.UploadKey }).OfType<string>()], ct);
         });
         return true;
     }
@@ -189,12 +197,12 @@ public sealed class FileStorage(
 
         if (file.UploadId is { } multipart)
         {
-            await archive.AbortMultipartUploadAsync(path, multipart, ct);
+            await archive.AbortMultipartUploadAsync(UploadKeyOf(file), multipart, ct);
             await using var conn = await source.OpenConnectionAsync(ct);
             await new SetUploadIdOperation(conn, null).ClearAsync(path, multipart, ct);
         }
 
-        var session = await archive.GenerateUploadUrlAsync(file.Path, file.MimeType, file.SizeBytes, ct);
+        var session = await archive.GenerateUploadUrlAsync(UploadKeyOf(file), file.MimeType, file.SizeBytes, ct);
         hookDispatcher.Enqueue(path, (h, t) => h.OnUploadUrlGeneratedAsync(path, session, t));
         return session;
     }
@@ -207,7 +215,7 @@ public sealed class FileStorage(
         if (file.UploadStatus != UploadStatus.Complete)
             throw new InvalidUploadStatusException(path, UploadStatus.Complete, file.UploadStatus);
 
-        var session = await archive.GenerateDownloadUrlAsync(file.Path, ct);
+        var session = await archive.GenerateDownloadUrlAsync(file.ObjectKey ?? file.Path, ct);
         hookDispatcher.Enqueue(path, (h, t) => h.OnDownloadUrlGeneratedAsync(path, session, t));
         return session;
     }
@@ -224,33 +232,42 @@ public sealed class FileStorage(
         if (file.UploadStatus != UploadStatus.Pending)
             throw new InvalidUploadStatusException(path, UploadStatus.Pending, file.UploadStatus);
 
+        var key = UploadKeyOf(file);
         string? contentHash;
         if (file.UploadId is { } uploadId)
         {
             // Parts are signed without a length, so this is the only point where the declared size (and with
             // it MaxFileSizeBytes) can be held to. A mismatch discards the parts; the client starts over.
-            var uploaded = (await archive.ListPartsAsync(path, uploadId, ct)).Sum(p => p.Size ?? 0);
+            var uploaded = (await archive.ListPartsAsync(key, uploadId, ct)).Sum(p => p.Size ?? 0);
             if (uploaded != file.SizeBytes)
             {
-                await archive.AbortMultipartUploadAsync(path, uploadId, ct);
+                await archive.AbortMultipartUploadAsync(key, uploadId, ct);
                 await using var abortConn = await source.OpenConnectionAsync(ct);
                 await new SetUploadIdOperation(abortConn, null).ClearAsync(path, uploadId, ct);
                 throw new UploadSizeMismatchException(path, file.SizeBytes, uploaded);
             }
-            contentHash = await archive.CompleteMultipartUploadAsync(path, uploadId, ct);
+            contentHash = await archive.CompleteMultipartUploadAsync(key, uploadId, ct);
         }
         else
         {
             // A single upload link can't promise the length on every archive, so the stored object is measured.
-            var stored = await archive.HeadAsync(path, ct) ?? throw new FileNotUploadedException(path);
+            var stored = await archive.HeadAsync(key, ct) ?? throw new FileNotUploadedException(path);
             if (stored.Size != file.SizeBytes) throw new UploadSizeMismatchException(path, file.SizeBytes, stored.Size);
             contentHash = stored.ETag;
         }
 
-        return await WithHooksAsync(HookEventKind.UploadConfirmed, path,
+        var confirmed = await WithHooksAsync(HookEventKind.UploadConfirmed, path,
             (conn, tx) => new ConfirmUploadOperation(conn, tx).ExecuteAsync(path, file.Version, contentHash, ct), ct)
             ?? throw StorageException.Changed(path);
+
+        // The bytes this upload replaced aren't read any more.
+        if (file.ObjectKey is { } replaced && replaced != confirmed.ObjectKey)
+            await BestEffortAsync(() => archive.DeleteObjectsAsync([replaced], ct));
+        return confirmed;
     }
+
+    /// <summary>Where a pending file's upload goes (its path, for one registered before keys of their own).</summary>
+    private static string UploadKeyOf(FileRecord file) => file.UploadKey ?? file.Path;
 
     /// <summary>
     /// Runs a file change and writes its hook deliveries in one transaction, so a committed change always reaches its
@@ -337,6 +354,10 @@ public sealed class FileStorage(
         if (batch.Count > 0)
             purged += await PurgeBatchAsync(batch, cutoffUtc, ct);
 
+        // Multipart uploads nobody finished, for archives that keep them (best-effort, like the rest of the sweep).
+        if (archive is IAbandonedUploads uploads)
+            await BestEffortAsync(async () => purged += await uploads.DropAbandonedUploadsAsync(cutoffUtc, ct));
+
         return purged;
     }
 
@@ -369,21 +390,22 @@ public sealed class FileStorage(
         if (file.UploadStatus != UploadStatus.Pending)
             throw new InvalidUploadStatusException(path, UploadStatus.Pending, file.UploadStatus);
 
+        var key = UploadKeyOf(file);
         if (file.UploadId is { } existing)
-            return await archive.SignPartAsync(path, existing, partNumber, ct);
+            return await archive.SignPartAsync(key, existing, partNumber, ct);
         if (partNumber != 1)
             throw StorageException.NoUpload(path);
 
         // Two requests may start an upload at once: one records its id, the other gives its own up and uses the winner's.
-        var started = await archive.CreateMultipartUploadAsync(path, file.MimeType, file.SizeBytes, ct);
+        var started = await archive.CreateMultipartUploadAsync(key, file.MimeType, file.SizeBytes, ct);
         await using (var conn = await source.OpenConnectionAsync(ct))
             if (await new SetUploadIdOperation(conn, null).StartAsync(path, file.Version, started, ct))
-                return await archive.SignPartAsync(path, started, partNumber, ct);
+                return await archive.SignPartAsync(key, started, partNumber, ct);
 
-        await BestEffortAsync(() => archive.AbortMultipartUploadAsync(path, started, ct));
+        await BestEffortAsync(() => archive.AbortMultipartUploadAsync(key, started, ct));
         var now = await GetAsync(path, ct);
         if (now is { UploadStatus: UploadStatus.Pending, UploadId: { } winner } && now.Version == file.Version)
-            return await archive.SignPartAsync(path, winner, partNumber, ct);
+            return await archive.SignPartAsync(key, winner, partNumber, ct);
         throw StorageException.Changed(path);
     }
 
@@ -395,6 +417,6 @@ public sealed class FileStorage(
         if (file.UploadId is null)
             return [];
 
-        return await archive.ListPartsAsync(path, file.UploadId, ct);
+        return await archive.ListPartsAsync(UploadKeyOf(file), file.UploadId, ct);
     }
 }

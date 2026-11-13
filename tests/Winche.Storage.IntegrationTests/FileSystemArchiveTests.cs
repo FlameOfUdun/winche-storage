@@ -143,6 +143,18 @@ public sealed class FileSystemArchiveTests(PostgresFixture fixture) : IClassFixt
     }
 
     [Fact]
+    public async Task Abandoned_multipart_uploads_are_dropped_by_the_sweep()
+    {
+        var abandoned = await _archive.CreateMultipartUploadAsync("a/old.bin", "application/octet-stream", 10);
+        var active = await _archive.CreateMultipartUploadAsync("a/new.bin", "application/octet-stream", 10);
+        Directory.SetLastWriteTimeUtc(Path.Combine(_root, "parts", abandoned), DateTime.UtcNow.AddDays(-2));
+
+        Assert.Equal(1, await _archive.DropAbandonedUploadsAsync(DateTime.UtcNow.AddDays(-1)));
+        Assert.False(Directory.Exists(Path.Combine(_root, "parts", abandoned)));
+        Assert.True(Directory.Exists(Path.Combine(_root, "parts", active)));
+    }
+
+    [Fact]
     public async Task Works_as_Winche_Storages_archive()
     {
         var storage = new FileStorage(fixture.DataSource, _archive, new HookInvocationDispatcher([]));

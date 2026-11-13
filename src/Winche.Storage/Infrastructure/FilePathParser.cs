@@ -18,8 +18,8 @@ public static class FilePathParser
         var id = segments.LastOrDefault();
         return new PathInfo(directory, id);
     }
-    /// <summary>The longest path, in UTF-8 bytes (Firebase Storage's limit).</summary>
-    public const int MaxPathBytes = 1024;
+    /// <summary>The longest path, in UTF-8 bytes: room for the generation in its archive key within S3's 1,024.</summary>
+    public const int MaxPathBytes = 1000;
 
     /// <summary>
     /// Whether <paramref name="path"/> is a file path in its one accepted form: segments joined by single <c>/</c>, none

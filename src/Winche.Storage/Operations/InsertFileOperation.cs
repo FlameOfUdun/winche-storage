@@ -16,15 +16,15 @@ internal sealed class InsertFileOperation(NpgsqlConnection conn, NpgsqlTransacti
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
-            INSERT INTO {WincheStorageTables.Files} (id, directory, path, metadata, mime_type, size_bytes, upload_status, created_at, updated_at, version)
-            VALUES (@id, @directory, @path, @metadata::jsonb, @mimeType, @sizeBytes, @pending, NOW(), NOW(), 1)
+            INSERT INTO {WincheStorageTables.Files} (id, directory, path, metadata, mime_type, size_bytes, upload_status, created_at, updated_at, version, upload_key)
+            VALUES (@id, @directory, @path, @metadata::jsonb, @mimeType, @sizeBytes, @pending, NOW(), NOW(), 1, @uploadKey)
             ON CONFLICT (path) DO NOTHING
             RETURNING *
             """;
         cmd.Parameters.AddWithValue("id", info.Id!);
         cmd.Parameters.AddWithValue("directory", info.Directory);
         cmd.Parameters.AddWithValue("path", path);
-        Fill(cmd, mimeType, sizeBytes, metadata);
+        Fill(cmd, path, mimeType, sizeBytes, metadata);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         return await NpgsqlFileReader.ReadSingleAsync(reader, ct);
     }
@@ -41,19 +41,20 @@ internal sealed class InsertFileOperation(NpgsqlConnection conn, NpgsqlTransacti
         cmd.CommandText = $"""
             UPDATE {WincheStorageTables.Files}
             SET metadata = @metadata::jsonb, mime_type = @mimeType, size_bytes = @sizeBytes, upload_status = @pending,
-                upload_id = NULL, content_hash = NULL, updated_at = NOW(), version = version + 1
+                upload_id = NULL, content_hash = NULL, upload_key = @uploadKey, updated_at = NOW(), version = version + 1
             WHERE path = @path AND version = @version
             RETURNING *
             """;
         cmd.Parameters.AddWithValue("path", path);
         cmd.Parameters.AddWithValue("version", version);
-        Fill(cmd, mimeType, sizeBytes, metadata);
+        Fill(cmd, path, mimeType, sizeBytes, metadata);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         return await NpgsqlFileReader.ReadSingleAsync(reader, ct);
     }
 
-    private static void Fill(NpgsqlCommand cmd, string mimeType, long sizeBytes, JsonObject? metadata)
+    private static void Fill(NpgsqlCommand cmd, string path, string mimeType, long sizeBytes, JsonObject? metadata)
     {
+        cmd.Parameters.AddWithValue("uploadKey", ObjectKeys.New(path));
         cmd.Parameters.Add(new NpgsqlParameter("metadata", NpgsqlDbType.Jsonb) { Value = (metadata ?? []).ToJsonString() });
         cmd.Parameters.AddWithValue("mimeType", mimeType);
         cmd.Parameters.AddWithValue("sizeBytes", sizeBytes);

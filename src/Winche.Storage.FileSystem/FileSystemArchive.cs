@@ -14,7 +14,7 @@ namespace Winche.Storage.FileSystem;
 /// archive signs (HMAC-SHA256, expiring, bound to the method, the path and — for uploads — the size), the way they
 /// would with S3's presigned URLs. Map the endpoints with <c>app.MapWincheStorageFileSystem()</c>.
 /// </summary>
-public sealed class FileSystemArchive : IArchive, Winche.Storage.Locations.IArchiveContent
+public sealed class FileSystemArchive : IArchive, IAbandonedUploads, Winche.Storage.Locations.IArchiveContent
 {
     private readonly FileSystemArchiveOptions _options;
     private readonly IHttpContextAccessor _http;
@@ -172,6 +172,21 @@ public sealed class FileSystemArchive : IArchive, Winche.Storage.Locations.IArch
     {
         if (Directory.Exists(PartsOf(uploadId))) Directory.Delete(PartsOf(uploadId), recursive: true);
         return Task.CompletedTask;
+    }
+
+    public Task<int> DropAbandonedUploadsAsync(DateTime olderThanUtc, CancellationToken ct = default)
+    {
+        var dropped = 0;
+        if (!Directory.Exists(PartsDir)) return Task.FromResult(0);
+        foreach (var dir in Directory.EnumerateDirectories(PartsDir))
+        {
+            ct.ThrowIfCancellationRequested();
+            // A part written refreshes the folder's time, so an upload in use is never touched.
+            if (Directory.GetLastWriteTimeUtc(dir) >= olderThanUtc) continue;
+            try { Directory.Delete(dir, recursive: true); dropped++; }
+            catch (IOException) { }   // in use or gone meanwhile: the next sweep tries again
+        }
+        return Task.FromResult(dropped);
     }
 
     // ── the endpoints' side ─────────────────────────────────────────────────────

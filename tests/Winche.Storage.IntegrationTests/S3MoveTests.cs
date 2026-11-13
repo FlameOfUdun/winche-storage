@@ -72,8 +72,9 @@ public class S3MoveTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
             var moves = host.Services.GetRequiredService<StorageMoves>();
             var big = new byte[3 * 1024 * 1024];
             Random.Shared.NextBytes(big);
-            await folder.WriteAsync("reports/2026/q3.pdf", new MemoryStream(big), "application/pdf");
             await storage.SetAsync("reports/2026/q3.pdf", "application/pdf", big.Length);
+            var key = (await storage.GetAsync("reports/2026/q3.pdf"))!.UploadKey!;
+            await folder.WriteAsync(key, new MemoryStream(big), "application/pdf");
             await storage.ConfirmUploadAsync("reports/2026/q3.pdf");
 
             var bucket = new ArchiveLocation
@@ -91,7 +92,7 @@ public class S3MoveTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
             await moves.SwitchAsync("admin@x", "Copied");
 
             var s3 = (IArchiveContent)await host.Services.GetRequiredService<ArchiveLocations>().GetAsync(bucket);
-            await using (var copy = await s3.OpenReadAsync("reports/2026/q3.pdf"))
+            await using (var copy = await s3.OpenReadAsync(key))
             {
                 using var bytes = new MemoryStream();
                 await copy!.CopyToAsync(bytes);

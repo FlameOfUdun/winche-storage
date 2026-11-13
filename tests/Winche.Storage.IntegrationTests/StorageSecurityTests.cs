@@ -83,7 +83,7 @@ public class StorageSecurityTests(PostgresFixture fixture) : IClassFixture<Postg
     public async Task Only_one_spelling_of_a_path_is_accepted()
     {
         var (core, _) = Storage();
-        foreach (var bad in new[] { "/a/b", "a/b/", "a//b", "a/./b", "a/../b", "a\\b", "a/\u0001b", new string('x', 1025) })
+        foreach (var bad in new[] { "/a/b", "a/b/", "a//b", "a/./b", "a/../b", "a\\b", "a/\u0001b", new string('x', 1001) })
             Assert.Equal("invalid-path", (await Assert.ThrowsAsync<StorageException>(() => core.SetAsync(bad, "text/plain", 1))).Error.Reason);
     }
 

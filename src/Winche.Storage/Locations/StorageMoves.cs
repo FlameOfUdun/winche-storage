@@ -96,16 +96,20 @@ public sealed class StorageMoves(
     {
         if (State.Move is not { } m) throw new StorageMoveException("No move is under way.");
         if (m.Phase != StorageMove.Ready) throw new StorageMoveException(m.Phase == StorageMove.Switched ? "Already switched." : "Wait until every file is copied.");
-        await SaveAsync(new StorageLocationSettings { Active = m.To!.Kind == "code" ? null : m.To, Move = m with { Phase = StorageMove.Switched } }, by, reason, ct);
+        await SaveAsync(new StorageLocationSettings { Active = m.To!.Kind == "code" ? null : m.To, Move = m with { Phase = StorageMove.Switched, SwitchedAt = DateTimeOffset.UtcNow } }, by, reason, ct);
     }
 
     /// <summary>Ends the move: the old location is no longer read or written. Its files stay there to delete by hand.</summary>
     public async Task FinishAsync(string? by, string reason, CancellationToken ct = default)
     {
         if (State.Move is not { Phase: StorageMove.Switched }) throw new StorageMoveException("Switch to the new location first.");
+        // Upload links handed out before the switch still write to the old location until they expire; a clean pass
+        // that started after that has copied whatever they brought.
         var progress = await ProgressAsync(ct);
-        if (progress is not { PassFinishedAt: not null, Failed: 0 } || progress.PassFinishedAt < State.Move.StartedAt)
-            throw new StorageMoveException("Wait for a catch-up pass with no failures after the switch.");
+        var safe = (State.Move.SwitchedAt ?? State.Move.StartedAt) + LinkLifetime;
+        if (progress is not { PassFinishedAt: not null, Failed: 0 } || progress.PassStartedAt < safe)
+            throw new StorageMoveException(
+                $"Wait for a catch-up pass with no failures that starts after {safe:u}: upload links from before the switch work until then.");
         await SaveAsync(State with { Move = null }, by, reason, ct);
     }
 
@@ -179,10 +183,14 @@ public sealed class StorageMoves(
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    internal async Task<string?> ContentTypeAsync(string path, CancellationToken ct)
+    /// <summary>The longest an upload link lasts (the folder archive's default): how long after a switch Finish waits.</summary>
+    internal static TimeSpan LinkLifetime = TimeSpan.FromHours(1);
+
+    /// <summary>The type of the file whose bytes (or pending upload) are at archive key <paramref name="key"/>.</summary>
+    internal async Task<string?> ContentTypeAsync(string key, CancellationToken ct)
     {
-        await using var cmd = db.CreateCommand($"SELECT mime_type FROM {WincheStorageTables.Files} WHERE path = $1 LIMIT 1");
-        cmd.Parameters.AddWithValue(path);
+        await using var cmd = db.CreateCommand($"SELECT mime_type FROM {WincheStorageTables.Files} WHERE object_key = $1 OR upload_key = $1 LIMIT 1");
+        cmd.Parameters.AddWithValue(key);
         return await cmd.ExecuteScalarAsync(ct) as string;
     }
 

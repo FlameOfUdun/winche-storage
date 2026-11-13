@@ -8,7 +8,7 @@ namespace Winche.Storage.Operations;
 internal sealed class ConfirmUploadOperation(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
     /// <summary>
-    /// Marks the file complete, but only the one that was checked: still pending, at <paramref name="version"/>. Null
+    /// Marks the file complete (its upload key becomes its object key), but only the one that was checked: still pending, at <paramref name="version"/>. Null
     /// when it changed meanwhile (overwritten, deleted, or confirmed by another request).
     /// </summary>
     internal async Task<FileRecord?> ExecuteAsync(string path, long version, string? contentHash, CancellationToken ct)
@@ -17,7 +17,7 @@ internal sealed class ConfirmUploadOperation(NpgsqlConnection conn, NpgsqlTransa
         cmd.Transaction = tx;
         cmd.CommandText = $"""
             UPDATE {WincheStorageTables.Files}
-            SET upload_status = @complete, upload_id = NULL, content_hash = @hash, updated_at = NOW()
+            SET upload_status = @complete, upload_id = NULL, content_hash = @hash, object_key = upload_key, upload_key = NULL, updated_at = NOW()
             WHERE path = @path AND version = @version AND upload_status = @pending
             RETURNING *
             """;

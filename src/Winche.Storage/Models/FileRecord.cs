@@ -53,4 +53,15 @@ public sealed record FileRecord
 
     [JsonPropertyName("contentHash")]
     public string? ContentHash { get; init; }
+
+    /// <summary>
+    /// Where the file's confirmed bytes are in the archive: a key of their own, never reused, so nothing else ever
+    /// writes there. Null until the first upload is confirmed.
+    /// </summary>
+    [JsonIgnore]
+    internal string? ObjectKey { get; init; }
+
+    /// <summary>Where the pending upload goes: a new key for each registration, so an old upload link can't reach it.</summary>
+    [JsonIgnore]
+    internal string? UploadKey { get; init; }
 }

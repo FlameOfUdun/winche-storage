@@ -118,11 +118,19 @@ public class StorageMoveTests(PostgresFixture fixture) : IClassFixture<PostgresF
         {
             var storage = host.Services.GetRequiredService<FileStorage>();
             var moves = host.Services.GetRequiredService<StorageMoves>();
+            StorageMoves.LinkLifetime = TimeSpan.Zero;   // no upload links outstanding in this test
+            // Uploads go to the file's own key (as through its upload link), which then holds its bytes.
+            async Task<string> Upload(string path, MemoryArchive into, string text)
+            {
+                var key = (await storage.GetAsync(path))!.UploadKey!;
+                into.Put(key, text);
+                await storage.ConfirmUploadAsync(path);
+                return key;
+            }
             await storage.SetAsync("docs/a.txt", "text/markdown", 5);
-            old.Put("docs/a.txt", "hello");
-            await storage.ConfirmUploadAsync("docs/a.txt");
+            var a = await Upload("docs/a.txt", old, "hello");
             old.Put("docs/c.txt", "gone soon");
-            Assert.Equal("mem://old/docs/a.txt", (await storage.GenerateDownloadUrlAsync("docs/a.txt")).Url);
+            Assert.Equal($"mem://old/{a}", (await storage.GenerateDownloadUrlAsync("docs/a.txt")).Url);
 
             // 1. Test the new place: a wrong secret fails at Connect; the right one passes every step.
             Assert.False((await moves.TestAsync(Bucket, "wrong")).Ok);
@@ -135,8 +143,8 @@ public class StorageMoveTests(PostgresFixture fixture) : IClassFixture<PostgresF
             await Assert.ThrowsAsync<StorageMoveException>(() => moves.StartAsync(Bucket, "right", "admin@x", "again"));
             await Until(() => moves.State.Move?.Phase == StorageMove.Ready, "the copy");
             var bucket = buckets.Buckets["smartairway-files"];
-            Assert.Equal(("hello", "text/markdown"), (Encoding.UTF8.GetString(bucket.Files["docs/a.txt"].Data), bucket.Files["docs/a.txt"].Type));
-            Assert.Equal("mem://old/docs/a.txt", (await storage.GenerateDownloadUrlAsync("docs/a.txt")).Url);   // still the old one
+            Assert.Equal(("hello", "text/markdown"), (Encoding.UTF8.GetString(bucket.Files[a].Data), bucket.Files[a].Type));
+            Assert.Equal($"mem://old/{a}", (await storage.GenerateDownloadUrlAsync("docs/a.txt")).Url);   // still the old one
             var progress = (await moves.ProgressAsync())!;
             Assert.Equal((2, 2, 0), (progress.Total, progress.Copied, progress.Failed));
 
@@ -144,24 +152,26 @@ public class StorageMoveTests(PostgresFixture fixture) : IClassFixture<PostgresF
             await host.Services.GetRequiredService<Locations.ArchiveRouter>().DeleteAsync("docs/c.txt");
             Assert.False(old.Files.ContainsKey("docs/c.txt") || bucket.Files.ContainsKey("docs/c.txt"));
             await storage.SetAsync("docs/b.txt", "text/plain", 5);
-            old.Put("docs/b.txt", "later");
-            await storage.ConfirmUploadAsync("docs/b.txt");
+            var b = await Upload("docs/b.txt", old, "later");
 
             // 3. Switch: new uploads go to the bucket; b (only in the old place for now) is still readable.
             await moves.SwitchAsync("admin@x", "Everything is copied");
+            StorageMoves.LinkLifetime = TimeSpan.FromHours(1);   // links from before the switch could still bring files
+            await Assert.ThrowsAsync<StorageMoveException>(() => moves.FinishAsync("admin@x", "Too soon"));
+            StorageMoves.LinkLifetime = TimeSpan.Zero;
             Assert.Equal(StorageMove.Switched, moves.State.Move?.Phase);
             Assert.Equal("r2-main", moves.State.Active?.Id);
             await storage.SetAsync("docs/new.txt", "text/plain", 3);
             Assert.StartsWith("mem://smartairway-files/", (await storage.GenerateUploadUrlAsync("docs/new.txt")).Url);
-            await Until(() => bucket.Files.ContainsKey("docs/b.txt"), "the catch-up copy");
-            Assert.Equal("mem://smartairway-files/docs/b.txt", (await storage.GenerateDownloadUrlAsync("docs/b.txt")).Url);
+            await Until(() => bucket.Files.ContainsKey(b), "the catch-up copy");
+            Assert.Equal($"mem://smartairway-files/{b}", (await storage.GenerateDownloadUrlAsync("docs/b.txt")).Url);
             await Assert.ThrowsAsync<StorageMoveException>(() => moves.CancelAsync("admin@x", "Change my mind"));
 
             // 4. Finish: the old place is left alone from now on (its files stay, to delete by hand).
-            await Until(() => moves.ProgressAsync().Result is { PassFinishedAt: not null, Failed: 0 } p && p.PassFinishedAt > DateTimeOffset.UtcNow.AddSeconds(-1), "a clean catch-up");
+            await Until(() => moves.ProgressAsync().Result is { PassFinishedAt: not null, Failed: 0 } p && p.PassStartedAt >= moves.State.Move!.SwitchedAt, "a clean catch-up after the switch");
             await moves.FinishAsync("admin@x", "Done");
             Assert.Null(moves.State.Move);
-            Assert.True(old.Files.ContainsKey("docs/a.txt"));
+            Assert.True(old.Files.ContainsKey(a));
             var history = await host.Services.GetRequiredService<SettingsStore>().HistoryAsync(StorageLocationSettings.Area);
             Assert.Equal(["Done", "Everything is copied", "Every file is copied: ready to switch", "Move to R2"], history.Select(h => h.Reason));
         }

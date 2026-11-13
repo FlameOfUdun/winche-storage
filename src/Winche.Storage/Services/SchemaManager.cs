@@ -67,6 +67,15 @@ public sealed class SchemaManager(
         // Step 2: deletes match a file and everything under it (path LIKE 'a/b/%'), which the primary key can't serve
         // unless the database's collation is C.
         const string prefixIndex = $"CREATE INDEX IF NOT EXISTS idx_{WincheStorageTables.Files}_path_prefix ON {WincheStorageTables.Files} (path text_pattern_ops)";
-        await WincheSchema.EnsureAsync(source, "storage", [sql, prefixIndex], ct);
+        // Step 3: each upload has an archive key of its own (ObjectKeys), so bytes are never overwritten in place.
+        // Files from before keep theirs, which was their path.
+        const string objectKeys = $"""
+            ALTER TABLE {WincheStorageTables.Files} ADD COLUMN IF NOT EXISTS object_key text, ADD COLUMN IF NOT EXISTS upload_key text;
+            UPDATE {WincheStorageTables.Files} SET object_key = path WHERE upload_status = 1 AND object_key IS NULL;
+            UPDATE {WincheStorageTables.Files} SET upload_key = path WHERE upload_status <> 1 AND upload_key IS NULL;
+            CREATE INDEX IF NOT EXISTS idx_{WincheStorageTables.Files}_object_key ON {WincheStorageTables.Files} (object_key);
+            CREATE INDEX IF NOT EXISTS idx_{WincheStorageTables.Files}_upload_key ON {WincheStorageTables.Files} (upload_key);
+            """;
+        await WincheSchema.EnsureAsync(source, "storage", [sql, prefixIndex, objectKeys], ct);
     }
 }

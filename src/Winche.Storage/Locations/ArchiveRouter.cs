@@ -10,7 +10,7 @@ namespace Winche.Storage.Locations;
 /// The archive FileStorage uses when the location can change: new files go to the location in use; during a move,
 /// deletes reach both places, and after the switch reads fall back to the old location for files not copied yet.
 /// </summary>
-internal sealed class ArchiveRouter(SettingsArea<StorageLocationSettings> area, ArchiveLocations locations) : IArchive
+internal sealed class ArchiveRouter(SettingsArea<StorageLocationSettings> area, ArchiveLocations locations) : IArchive, IAbandonedUploads
 {
     // Multipart uploads begun before a switch finish where they began.
     private readonly ConcurrentDictionary<string, IArchive> _uploads = new();
@@ -100,5 +100,12 @@ internal sealed class ArchiveRouter(SettingsArea<StorageLocationSettings> area, 
         var archive = await UploadAsync(path, uploadId, ct);
         _uploads.TryRemove(uploadId, out _);
         await archive.AbortMultipartUploadAsync(path, uploadId, ct);
+    }
+
+    public async Task<int> DropAbandonedUploadsAsync(DateTime olderThanUtc, CancellationToken ct = default)
+    {
+        var dropped = (await ActiveAsync(ct)) is IAbandonedUploads active ? await active.DropAbandonedUploadsAsync(olderThanUtc, ct) : 0;
+        if (await OtherAsync(ct) is IAbandonedUploads other) dropped += await other.DropAbandonedUploadsAsync(olderThanUtc, ct);
+        return dropped;
     }
 }

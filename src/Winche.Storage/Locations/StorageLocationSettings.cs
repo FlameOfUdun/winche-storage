@@ -91,4 +91,6 @@ public sealed record StorageMove
     public ArchiveLocation? From { get; init; }
     public ArchiveLocation? To { get; init; }
     public DateTimeOffset StartedAt { get; init; }
+    /// <summary>When the app switched to the new location (phase switched).</summary>
+    public DateTimeOffset? SwitchedAt { get; init; }
 }
