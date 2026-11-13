@@ -19,7 +19,8 @@ public static class ServiceCollectionExtensions
     {
         // Defaults registered BEFORE configure so user overrides (MapClaims/UseS3Archive) win
         // (.NET DI returns the last-registered singleton).
-        services.AddSingleton<IRuleClaimsAccessor>(NullRuleClaimsAccessor.Instance);
+        services.AddSingleton<IRuleClaimsAccessor>(WincheCallerClaimsAccessor.Instance);
+        StorageChangesExtensions.AddStorageActions(services);   // storage.deleteFiles, for hooks
         services.AddSingleton<IArchive, NullArchive>();
 
         var options = new WincheStorageOptions(services);

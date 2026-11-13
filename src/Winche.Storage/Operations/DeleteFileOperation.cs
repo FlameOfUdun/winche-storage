@@ -1,4 +1,5 @@
 using Npgsql;
+using Winche.Core;
 using Winche.Storage.Constants;
 using Winche.Storage.Infrastructure;
 using Winche.Storage.Models;
@@ -23,7 +24,7 @@ internal sealed class DeleteFileOperation(NpgsqlConnection conn, NpgsqlTransacti
             FOR UPDATE
             """;
         cmd.Parameters.AddWithValue("path", path);
-        cmd.Parameters.AddWithValue("prefix", LikePatternEscaper.Escape(path) + "/%");
+        cmd.Parameters.AddWithValue("prefix", WincheSql.EscapeLike(path) + "/%");
 
         var results = new List<FileDeleteCandidate>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -50,7 +51,7 @@ internal sealed class DeleteFileOperation(NpgsqlConnection conn, NpgsqlTransacti
             RETURNING path
             """;
         cmd.Parameters.AddWithValue("path", path);
-        cmd.Parameters.AddWithValue("prefix", LikePatternEscaper.Escape(path) + "/%");
+        cmd.Parameters.AddWithValue("prefix", WincheSql.EscapeLike(path) + "/%");
 
         var deleted = new List<string>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);

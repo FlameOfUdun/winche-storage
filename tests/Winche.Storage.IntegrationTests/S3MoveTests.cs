@@ -26,7 +26,7 @@ public class S3MoveTests(PostgresFixture fixture) : IClassFixture<PostgresFixtur
     public async Task InitializeAsync()
     {
         await fixture.ResetAsync();
-        await using var cmd = fixture.DataSource.CreateCommand("DROP TABLE IF EXISTS winche_settings; DROP TABLE IF EXISTS winche_secrets; DROP TABLE IF EXISTS winche_storage_moves;");
+        await using var cmd = fixture.DataSource.CreateCommand("DROP TABLE IF EXISTS winche_schema; DROP TABLE IF EXISTS winche_settings; DROP TABLE IF EXISTS winche_secrets; DROP TABLE IF EXISTS winche_storage_moves;");
         await cmd.ExecuteNonQueryAsync();
         await _s3.StartAsync();
         using var client = new AmazonS3Client("test", "test", new AmazonS3Config { ServiceURL = _s3.GetConnectionString(), ForcePathStyle = true, AuthenticationRegion = "us-east-1" });

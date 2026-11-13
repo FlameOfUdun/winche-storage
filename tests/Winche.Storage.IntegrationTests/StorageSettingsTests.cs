@@ -18,7 +18,7 @@ public class StorageSettingsTests(PostgresFixture fixture) : IClassFixture<Postg
     public async Task InitializeAsync()
     {
         await fixture.ResetAsync();
-        await using var cmd = fixture.DataSource.CreateCommand("DROP TABLE IF EXISTS winche_settings; DROP TABLE IF EXISTS winche_secrets;");
+        await using var cmd = fixture.DataSource.CreateCommand("DROP TABLE IF EXISTS winche_schema; DROP TABLE IF EXISTS winche_settings; DROP TABLE IF EXISTS winche_secrets;");
         await cmd.ExecuteNonQueryAsync();
     }
 

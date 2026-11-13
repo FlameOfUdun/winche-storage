@@ -61,10 +61,7 @@ internal sealed class RequestLog(ILogger logger, Func<RequestLogOptions?> curren
         if (!logger.IsEnabled(level)) return;
         if (level == LogLevel.Information && Random.Shared.NextDouble() >= options.SuccessSampleRate) return;
         var c = claims();
-        var principal = c is null ? "signed out"
-            : c.TryGetValue("uid", out var uid) && uid is not null ? uid.ToString()!
-            : c.TryGetValue("sub", out var sub) && sub is not null ? sub.ToString()!
-            : "signed out";
+        var principal = WincheCaller.UidOf(c) ?? "signed out";
         logger.Log(level, new EventId(outcome == "denied" ? 2 : slow ? 3 : 1, "Request"),
             new RequestEntry(operation, path, principal, outcome, ms, slow), null, static (e, _) => e.ToString());
     }

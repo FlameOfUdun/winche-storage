@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using Winche.Core;
 using Winche.Storage.Constants;
 using Winche.Storage.Interfaces;
 
@@ -62,9 +63,7 @@ public sealed class SchemaManager(
                 ON {{WincheStorageTables.HookDeliveries}}(hook, path, id) WHERE dead_at IS NULL;
             """;
 
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = sql;
-        await cmd.ExecuteNonQueryAsync(ct);
+        // Numbered steps under one lock (Winche.Core): new tables or columns go in a new step.
+        await WincheSchema.EnsureAsync(source, "storage", [sql], ct);
     }
 }

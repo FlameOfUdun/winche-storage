@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using Winche.Core;
 using Winche.Storage.Constants;
-using Winche.Storage.Coordination;
+using Winche.Core;
 using Winche.Storage.Interfaces;
 
 namespace Winche.Storage.Locations;

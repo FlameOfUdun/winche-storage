@@ -3,7 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Winche.Storage.Constants;
-using Winche.Storage.Coordination;
+using Winche.Core;
 using Winche.Storage.DependencyInjection;
 
 namespace Winche.Storage.Services;

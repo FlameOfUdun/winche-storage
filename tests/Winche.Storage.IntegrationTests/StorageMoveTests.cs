@@ -73,7 +73,7 @@ public class StorageMoveTests(PostgresFixture fixture) : IClassFixture<PostgresF
     public async Task InitializeAsync()
     {
         await fixture.ResetAsync();
-        await using var cmd = fixture.DataSource.CreateCommand("DROP TABLE IF EXISTS winche_settings; DROP TABLE IF EXISTS winche_secrets; DROP TABLE IF EXISTS winche_storage_moves;");
+        await using var cmd = fixture.DataSource.CreateCommand("DROP TABLE IF EXISTS winche_schema; DROP TABLE IF EXISTS winche_settings; DROP TABLE IF EXISTS winche_secrets; DROP TABLE IF EXISTS winche_storage_moves;");
         await cmd.ExecuteNonQueryAsync();
         StorageMoveWorker.Tick = TimeSpan.FromMilliseconds(100);
         StorageMoveWorker.CatchUpEvery = TimeSpan.FromMilliseconds(200);
