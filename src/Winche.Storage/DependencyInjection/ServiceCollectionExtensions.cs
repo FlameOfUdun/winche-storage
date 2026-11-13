@@ -8,6 +8,7 @@ using Winche.Storage.Constants;
 using Winche.Storage.Interfaces;
 using Winche.Storage.Models;
 using Winche.Storage.Services;
+using Winche.Values;
 
 namespace Winche.Storage.DependencyInjection;
 
@@ -44,8 +45,7 @@ public static class ServiceCollectionExtensions
         // This package owns an isolated rules engine, registered under a package-specific key so the
         // Storage engine and the Database engine never merge. Built from this package's own UseRules
         // rulesets (empty => deny-all). The engine is hot-swappable via a mutable rule-set repository,
-        // still isolated under the package-specific key. Uses the engine's default DefaultRuleValueComparer
-        // — the database's ValueComparer-backed comparer is a Winche.Database concern and not appropriate here.
+        // still isolated under the package-specific key. Values compare as the database orders them (Winche.Values).
         services.AddWincheRules(WincheStorageKeys.RULE_ENGINE_KEY, o => o
             .WithMutableRuleSetRepository(RuleSet.Merge(options.Rulesets)));
 

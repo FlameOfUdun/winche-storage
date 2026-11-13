@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using Winche.Rules;
 using Winche.Storage.Infrastructure;
 using Winche.Storage.Models;
+using Winche.Values;
 
 namespace Winche.Storage.Authorization;
 
@@ -13,47 +14,34 @@ namespace Winche.Storage.Authorization;
 /// </summary>
 internal static class FileToResource
 {
-    public static RuleValue Convert(FileRecord file) =>
-        RuleValue.Map(new Dictionary<string, RuleValue>
+    public static MapValue Convert(FileRecord file) =>
+        new MapValue(new Dictionary<string, Value>
         {
-            ["id"] = RuleValue.String(file.Id),
-            ["path"] = RuleValue.String(file.Path),
-            ["directory"] = RuleValue.String(file.Directory),
-            ["mimeType"] = RuleValue.String(file.MimeType),
-            ["sizeBytes"] = RuleValue.Int(file.SizeBytes),
-            ["uploadStatus"] = RuleValue.String(file.UploadStatus.ToString().ToLowerInvariant()),
-            ["version"] = RuleValue.Int(file.Version),
-            ["createdAt"] = RuleValue.Timestamp(new DateTimeOffset(file.CreatedAt, TimeSpan.Zero)),
-            ["updatedAt"] = RuleValue.Timestamp(new DateTimeOffset(file.UpdatedAt, TimeSpan.Zero)),
-            ["metadata"] = ConvertJsonNode(file.MetaData),
+            ["id"] = new StringValue(file.Id),
+            ["path"] = new StringValue(file.Path),
+            ["directory"] = new StringValue(file.Directory),
+            ["mimeType"] = new StringValue(file.MimeType),
+            ["sizeBytes"] = new IntegerValue(file.SizeBytes),
+            ["uploadStatus"] = new StringValue(file.UploadStatus.ToString().ToLowerInvariant()),
+            ["version"] = new IntegerValue(file.Version),
+            ["createdAt"] = new TimestampValue(new DateTimeOffset(file.CreatedAt, TimeSpan.Zero)),
+            ["updatedAt"] = new TimestampValue(new DateTimeOffset(file.UpdatedAt, TimeSpan.Zero)),
+            ["metadata"] = PlainJson.ToValue(file.MetaData),
         });
 
     /// <summary>
     /// <c>request.resource</c> for a file being registered: <c>path</c>, <c>directory</c>, <c>mimeType</c>,
     /// <c>sizeBytes</c> and <c>metadata</c> (the fields a client supplies).
     /// </summary>
-    public static RuleValue Incoming(string path, string mimeType, long sizeBytes, JsonObject? metadata)
+    public static MapValue Incoming(string path, string mimeType, long sizeBytes, JsonObject? metadata)
     {
-        return RuleValue.Map(new Dictionary<string, RuleValue>
+        return new MapValue(new Dictionary<string, Value>
         {
-            ["path"] = RuleValue.String(path),
-            ["directory"] = RuleValue.String(FilePathParser.Parse(path).Directory),
-            ["mimeType"] = RuleValue.String(mimeType),
-            ["sizeBytes"] = RuleValue.Int(sizeBytes),
-            ["metadata"] = ConvertJsonNode(metadata),
+            ["path"] = new StringValue(path),
+            ["directory"] = new StringValue(FilePathParser.Parse(path).Directory),
+            ["mimeType"] = new StringValue(mimeType),
+            ["sizeBytes"] = new IntegerValue(sizeBytes),
+            ["metadata"] = PlainJson.ToValue(metadata),
         });
     }
-
-    private static RuleValue ConvertJsonNode(JsonNode? node) => node switch
-    {
-        null => RuleValue.Null,
-        JsonValue v when v.TryGetValue<bool>(out var b) => RuleValue.Bool(b),
-        JsonValue v when v.TryGetValue<long>(out var l) => RuleValue.Int(l),
-        JsonValue v when v.TryGetValue<int>(out var i) => RuleValue.Int(i),
-        JsonValue v when v.TryGetValue<double>(out var d) => RuleValue.Double(d),
-        JsonValue v when v.TryGetValue<string>(out var s) => RuleValue.String(s!),
-        JsonObject obj => RuleValue.Map(obj.ToDictionary(kv => kv.Key, kv => ConvertJsonNode(kv.Value))),
-        JsonArray arr => RuleValue.List(arr.Select(ConvertJsonNode).ToList()),
-        _ => RuleValue.String(node.ToString()),
-    };
 }

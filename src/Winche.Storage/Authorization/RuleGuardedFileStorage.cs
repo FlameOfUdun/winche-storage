@@ -3,6 +3,7 @@ using Winche.Rules;
 using Winche.Rules.Evaluation;
 using Winche.Storage.Interfaces;
 using Winche.Storage.Models;
+using Winche.Values;
 
 namespace Winche.Storage.Authorization;
 
@@ -35,7 +36,7 @@ public sealed class RuleGuardedFileStorage(
     {
         // The file being registered is request.resource, so a create rule can check its size or type.
         var incoming = FileToResource.Incoming(path, mimeType, sizeBytes, metadata);
-        await AuthorizeAsync(RuleOperation.Create, path, RuleValue.Null, "create", ct, incoming);
+        await AuthorizeAsync(RuleOperation.Create, path, RuleValues.Null, "create", ct, incoming);
         return await inner.SetAsync(path, mimeType, sizeBytes, metadata, ct);
     }
 
@@ -104,7 +105,7 @@ public sealed class RuleGuardedFileStorage(
 
     private async Task<IEnumerable<FileRecord>> ListCoreAsync(string directory, string? mimeType, CancellationToken ct)
     {
-        await AuthorizeAsync(RuleOperation.List, directory, RuleValue.Null, "list", ct);
+        await AuthorizeAsync(RuleOperation.List, directory, RuleValues.Null, "list", ct);
         return await inner.ListAsync(directory, mimeType, ct);
     }
 
@@ -130,24 +131,24 @@ public sealed class RuleGuardedFileStorage(
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private async Task AuthorizeAsync(RuleOperation operation, string path, RuleValue resource, string method, CancellationToken ct, RuleValue? requestResource = null)
+    private async Task AuthorizeAsync(RuleOperation operation, string path, Value resource, string method, CancellationToken ct, Value? requestResource = null)
     {
         var request = new RuleRequest
         {
             Resource = resource,
-            Request = RequestBuilder.Build(claimsProvider(), method, requestResource ?? RuleValue.Null),
+            Request = RuleValues.Request(claimsProvider(), method, requestResource ?? RuleValues.Null),
             Provider = new FileStoreResourceProvider(inner),
         };
         if (!await engine.AllowsAsync(operation, path, request, ct))
             throw new AccessDeniedException(path, method);
     }
 
-    private async Task<RuleValue> FetchResourceAsync(string path, CancellationToken ct)
+    private async Task<Value> FetchResourceAsync(string path, CancellationToken ct)
     {
         var file = await inner.GetAsync(path, ct);
         return ToResource(file);
     }
 
-    private static RuleValue ToResource(FileRecord? file) =>
-        file is not null ? FileToResource.Convert(file) : RuleValue.Null;
+    private static Value ToResource(FileRecord? file) =>
+        file is not null ? FileToResource.Convert(file) : RuleValues.Null;
 }

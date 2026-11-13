@@ -5,6 +5,7 @@ using Winche.Rules.Text;
 using Winche.Storage.Authorization;
 using Winche.Storage.Logging;
 using Xunit;
+using Winche.Values;
 
 namespace Winche.Storage.Tests;
 
@@ -25,7 +26,7 @@ public class RequestLogTests
         var log = new Capture();
         var claims = () => uid is null ? null : (IReadOnlyDictionary<string, object?>)new Dictionary<string, object?> { ["uid"] = uid };
         var engine = new RuleEngine(new StaticRuleSetRepository(RuleText.ParseRuleSet(
-            "match uploads/{uid}/{file=**} { allow read, delete: if request.auth.uid == uid; }")), new DefaultRuleValueComparer());
+            "match uploads/{uid}/{file=**} { allow read, delete: if request.auth.uid == uid; }")));
         var storage = new RuleGuardedFileStorage(new RecordingFileStorage { DeleteReturns = true }, engine, claims,
             new RequestLog(log, new RequestLogOptions { SuccessSampleRate = rate }, claims));
         return (storage, log);

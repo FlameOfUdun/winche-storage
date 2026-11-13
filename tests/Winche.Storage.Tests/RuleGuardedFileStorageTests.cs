@@ -3,13 +3,14 @@ using Winche.Rules.Evaluation;
 using Winche.Rules.Expressions;
 using Winche.Storage.Authorization;
 using Xunit;
+using Winche.Values;
 
 namespace Winche.Storage.Tests;
 
 public class RuleGuardedFileStorageTests
 {
     private static RuleGuardedFileStorage Guarded(RecordingFileStorage inner, Action<RuleSetBuilder> rules) =>
-        new(inner, new RuleEngine(new StaticRuleSetRepository(RuleSetBuilder.Build(rules)), new DefaultRuleValueComparer()), () => null);
+        new(inner, new RuleEngine(new StaticRuleSetRepository(RuleSetBuilder.Build(rules))), () => null);
 
     [Fact]
     public async Task Allowed_operation_delegates_to_the_inner_core()
@@ -41,7 +42,7 @@ public class RuleGuardedFileStorageTests
         var guarded = Guarded(inner, rb =>
             rb.Match("files/{id}", mb => mb.Allow([RuleOperation.Create],
                 Expr.RequestResource("sizeBytes").Le(Expr.Const(100))
-                    .And(Expr.RequestResource("directory").Eq(Expr.Value(RuleValue.String("files")))))));
+                    .And(Expr.RequestResource("directory").Eq(Expr.Value(new StringValue("files")))))));
 
         await guarded.SetAsync("files/small", "text/plain", 100);
         await Assert.ThrowsAsync<AccessDeniedException>(() => guarded.SetAsync("files/large", "text/plain", 101));

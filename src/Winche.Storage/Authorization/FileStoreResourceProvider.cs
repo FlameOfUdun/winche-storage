@@ -1,6 +1,7 @@
 using Winche.Rules;
 using Winche.Rules.Evaluation;
 using Winche.Storage.Interfaces;
+using Winche.Values;
 
 namespace Winche.Storage.Authorization;
 
@@ -15,9 +16,9 @@ internal sealed class FileStoreResourceProvider(IFileStorage inner) : IRuleResou
         return file is not null;
     }
 
-    public async Task<RuleValue> GetAsync(string path, CancellationToken ct = default)
+    public async Task<Value> GetAsync(string path, CancellationToken ct = default)
     {
         var file = await inner.GetAsync(path, ct);
-        return file is not null ? FileToResource.Convert(file) : RuleValue.Null;
+        return file is not null ? FileToResource.Convert(file) : RuleValues.Null;
     }
 }
