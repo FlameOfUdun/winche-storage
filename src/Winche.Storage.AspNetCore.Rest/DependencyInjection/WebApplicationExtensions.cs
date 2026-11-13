@@ -37,21 +37,21 @@ public static class WebApplicationExtensions
         {
             var decoded = DecodePath(path);
             var file = await files.GetAsync(decoded, ct);
-            return file is null ? Results.NotFound() : Results.Json(file);
+            return file is null ? ExceptionHandler.NotFound(decoded) : Results.Json(file);
         });
 
         group.MapPatch("/{path}", async (string path, SetMetadataRequest req, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
             var file = await files.UpdateMetadataAsync(decoded, req.Metadata, ct);
-            return file is null ? Results.NotFound() : Results.Json(file);
+            return file is null ? ExceptionHandler.NotFound(decoded) : Results.Json(file);
         });
 
         group.MapDelete("/{path}", async (string path, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
             var deleted = await files.DeleteAsync(decoded, ct);
-            return deleted ? Results.NoContent() : Results.NotFound();
+            return deleted ? Results.NoContent() : ExceptionHandler.NotFound(decoded);
         });
 
         group.MapGet("/ping", () => Results.Ok());
