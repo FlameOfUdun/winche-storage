@@ -6,7 +6,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Testcontainers.LocalStack;
-using Winche.Config;
+using Winche.Core;
 using Winche.Storage.DependencyInjection;
 using Winche.Storage.FileSystem;
 using Winche.Storage.Interfaces;

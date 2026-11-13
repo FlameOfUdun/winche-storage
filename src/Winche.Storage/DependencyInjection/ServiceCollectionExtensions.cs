@@ -62,7 +62,7 @@ public static class ServiceCollectionExtensions
                 (d.ImplementationInstance as Microsoft.Extensions.Options.IConfigureOptions<OrphanSweepOptions>)?.Configure(sweep);
             sweep.Enabled = options.OrphanSweepInCode;
             services.AddSingleton<Microsoft.Extensions.Options.IOptions<OrphanSweepOptions>>(Microsoft.Extensions.Options.Options.Create(sweep));
-            var area = Winche.Config.ServiceCollectionExtensions.AddWincheSettingsArea(services, Settings.StorageSettings.Area, "Storage",
+            var area = Winche.Core.ServiceCollectionExtensions.AddWincheSettingsArea(services, Settings.StorageSettings.Area, "Storage",
                 Settings.StorageSettings.From(options, sweep, options.OrphanSweepInCode), s => s.Problems());
             area.Changed += s => s.ApplyTo(options, limits, sweep);
         }
@@ -70,7 +70,7 @@ public static class ServiceCollectionExtensions
         {
             // Where files are kept can change from the console (a guided move): FileStorage goes through the router,
             // and the archive registered in code (the last IArchive) is "the app's own location".
-            var locationArea = Winche.Config.ServiceCollectionExtensions.AddWincheSettingsArea(services, Locations.StorageLocationSettings.Area,
+            var locationArea = Winche.Core.ServiceCollectionExtensions.AddWincheSettingsArea(services, Locations.StorageLocationSettings.Area,
                 "File location", new Locations.StorageLocationSettings(), s => s.Problems());
             services.AddSingleton(sp =>
             {

@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
-using Winche.Config;
+using Winche.Core;
 using Winche.Storage.Constants;
 using Winche.Storage.Coordination;
 using Winche.Storage.Interfaces;
