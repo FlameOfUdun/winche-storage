@@ -1,6 +1,6 @@
 # Winche.Storage
 
-Lightweight .NET libraries for storing file metadata in PostgreSQL and objects in S3-compatible archives via presigned URLs. The solution includes core abstractions, an S3 archive provider, an ASP.NET Core base + REST adapter, and a sample app.
+Lightweight .NET libraries for storing file metadata in PostgreSQL and bytes in an archive (S3-compatible, or a folder on disk) via signed URLs. The solution includes core abstractions, S3 and folder archive providers, an ASP.NET Core base + REST adapter, and a sample app.
 
 Access control is enforced with [Winche.Rules](https://github.com/FlameOfUdun/winche-rules) — the same Firestore-style rules engine used by `Winche.Database`.
 
@@ -23,6 +23,7 @@ flowchart TD
     Rest["Winche.Storage.AspNetCore.Rest<br/>MapWincheStorageRestApi"]
     Base["Winche.Storage.AspNetCore<br/>FileClaimsAccessor · MapClaims"]
     S3["Winche.Storage.S3<br/>UseS3Archive · S3Archive"]
+    FS["Winche.Storage.FileSystem<br/>UseFileSystemArchive · FileSystemArchive"]
     Core["Winche.Storage<br/>IFileStorage · guard · schema · hooks"]
     Rules["Winche.Rules<br/>RuleEngine · RuleText"]
 
@@ -30,6 +31,7 @@ flowchart TD
     Rest --> Core
     Base --> Core
     S3 --> Core
+    FS --> Core
     Core --> Rules
 ```
 
@@ -44,14 +46,14 @@ flowchart LR
     Guard -->|delegate| Core["FileStorage"]
     Engine --> Claims["IRuleClaimsAccessor"]
     Core --> DB[("PostgreSQL")]
-    Core --> Archive["IArchive<br/>NullArchive / S3Archive"]
+    Core --> Archive["IArchive<br/>NullArchive / S3Archive / FileSystemArchive"]
 ```
 
 ## Install
 
 ```cmd
 dotnet add package Winche.Storage
-dotnet add package Winche.Storage.S3
+dotnet add package Winche.Storage.S3            # or Winche.Storage.FileSystem
 dotnet add package Winche.Storage.AspNetCore.Rest
 ```
 
@@ -108,7 +110,7 @@ builder.Services.AddWincheStorage(opts =>
 
 ```csharp
 await app.InitializeWincheStorageAsync();   // creates the winche_files table if it doesn't exist
-app.MapWincheStorageRestApi();              // maps REST routes under the "files/" prefix
+app.MapWincheStorageRestApi();              // maps REST routes under the "files/v1" prefix
 ```
 
 See [samples/Winche.Storage.Sample](samples/Winche.Storage.Sample) for a complete working example.
@@ -139,9 +141,13 @@ services.AddWincheStorage(opts =>
 | `UseRulesFile(path)` / `UseRulesText(text)` / `UseRules(RuleSet)` | Adds rules to the guard. Multiple calls accumulate (OR-combined). |
 | `UseHooks(h => h.Add<T>(path))` | Registers `FileStoreHook` lifecycle listeners, each bound to a Firestore-style path pattern. |
 | `UseOrphanSweep(...)` | Enables the background sweep that reclaims archive objects with no matching DB row. See [Orphan Sweep](#orphan-sweep). |
+| `MaxFileSizeBytes` | Largest file a client may register (`null`, the default: no limit beyond the archive's). Larger is `invalid-argument` (reason `too-large`); multipart parts that don't add up to the declared size are refused at confirm. |
+| `UseSettings()` | Lets the Winche console change the size limit, request logging and the orphan sweep without a deploy; code values are the starting ones. Needs `AddWincheConfig(…)`. |
+| `LogRequests(...)` | Logs requests that go through the rules. See [Request logging](#request-logging-910). |
+| `HookDelivery` | `HookDeliveryOptions`: poll interval, lease, retry age, backoff, retention, batch size, parallelism. See [Hooks](#hooks). |
 
-`UseS3Archive` (from `Winche.Storage.S3`) and `MapClaims` (from `Winche.Storage.AspNetCore`) are
-extension methods on `WincheStorageOptions`.
+`UseS3Archive` (from `Winche.Storage.S3`), `UseFileSystemArchive` (from `Winche.Storage.FileSystem`) and `MapClaims`
+(from `Winche.Storage.AspNetCore`) are extension methods on `WincheStorageOptions`.
 
 ### `S3ArchiveOptions`
 
@@ -151,6 +157,8 @@ extension methods on `WincheStorageOptions`.
 | `RegionName` | _(required)_ | AWS region (e.g. `"us-east-1"`) |
 | `AccessKey` | `null` | Optional — omit to use ambient credentials |
 | `SecretKey` | `null` | Optional — omit to use ambient credentials |
+| `ServiceUrl` | `null` | S3-compatible endpoint (e.g. `http://localhost:9000` for MinIO); null targets AWS |
+| `ForcePathStyle` | `true` | Path-style addressing (MinIO and most S3-compatible stores); only used with `ServiceUrl` |
 | `PresignedUrlExpiry` | `00:15:00` | Lifetime of generated presigned URLs |
 
 Configure S3 with a delegate (bind from `IConfiguration` yourself if you prefer):
@@ -165,20 +173,21 @@ opts.UseS3Archive(s3 =>
 
 ## REST Endpoints
 
-All `{path}` segments are **base64url-encoded** file paths (or directory paths for `:list`). CRUD
-uses HTTP methods; per-file operations use AIP-136 colon-verbs (all `POST`).
+Routes are under `/files/v1` (the `prefix` argument of `MapWincheStorageRestApi`). All `{path}` segments are
+**base64url-encoded** file paths (or directory paths for `:list`). CRUD uses HTTP methods; per-file operations use
+AIP-136 colon-verbs (all `POST`).
 
 | Method | Route | Description |
 | --- | --- | --- |
-| `PUT` | `/{path}` | Register a file, new or replacing the one there (its upload starts over). Body: `mimeType`, `sizeBytes`, `metadata?`, `precondition?` (`{"exists": false}` create-only, `{"version": n}`) |
+| `PUT` | `/{path}` | Register a file, new or replacing the one there (its upload starts over). Body: `mimeType`, `sizeBytes`, `metadata?`, `precondition?` (`{"exists": false}` create-only, `{"version": n}`), `contentDisposition?`, `cacheControl?` |
 | `GET` | `/{path}` | Get a file record |
-| `PATCH` | `/{path}` | Merge into the file's metadata (`{"metadata": {...}}`; a null value removes the key) |
-| `DELETE` | `/{path}` | Delete the file and every file under `path/` (each one rule-checked; one refusal deletes nothing); archive objects are removed best-effort afterward |
+| `PATCH` | `/{path}` | Merge into the file's metadata (`{"metadata": {...}}`; a null value removes the key) and set `contentDisposition` / `cacheControl` (`""` clears); `precondition?` (`{"version": n}`) |
+| `DELETE` | `/{path}` | Delete the file and every file under `path/` (each one rule-checked; one refusal deletes nothing); archive objects are removed best-effort afterward. `?ifVersion=n` deletes only that version |
 | `GET` | `/ping` | Liveness check |
 | `POST` | `/{path}:confirm` | Confirm the upload: the stored object must be exactly the declared size; confirming again returns the file |
 | `POST` | `/{path}:upload` | Generate a presigned upload URL |
 | `POST` | `/{path}:download` | Generate a presigned download URL |
-| `POST` | `/{path}:list` | List files in a directory (`?mimeType=` filter optional) |
+| `POST` | `/{path}:list` | A page of a folder: `{items, prefixes, nextPageToken}` (`?maxResults=&pageToken=&mimeType=`); `/:list` lists the top |
 | `POST` | `/{path}:signPart` | Sign a multipart upload part (`{ "partNumber": N }`) |
 | `POST` | `/{path}:listParts` | List uploaded parts for a multipart upload |
 
@@ -192,17 +201,18 @@ app.MapWincheStorageRestApi(prefix: "storage")
 
 ### Request pipeline
 
-Every endpoint runs the built-in `ClaimsAccessor` filter (maps the request to caller claims) and the
-`ExceptionHandler` filter (translates exceptions to status codes), outermost, before the handler
-decodes the base64url path and calls `IFileStorage`:
+Every endpoint runs two built-in filters before the handler decodes the base64url path and calls `IFileStorage`:
+the `ExceptionHandler` outermost (answers failures with the shared Winche error,
+`{ "error": { code, message, reason? } }`), then the `ClaimsAccessor` (maps the request to caller claims), so a
+failing claims mapper gets the same error shape:
 
 ```mermaid
 flowchart LR
-    Req["HTTP<br/>/files/v1/{base64url}:verb"] --> CA["ClaimsAccessor<br/>SetClaims(HttpContext)"]
-    CA --> EH["ExceptionHandler"]
-    EH --> Handler["handler<br/>DecodePath → IFileStorage"]
+    Req["HTTP<br/>/files/v1/{base64url}:verb"] --> EH["ExceptionHandler"]
+    EH --> CA["ClaimsAccessor<br/>SetClaims(HttpContext)"]
+    CA --> Handler["handler<br/>DecodePath → IFileStorage"]
     Handler --> Ok["Results.Json"]
-    EH -. on exception .-> Err["403 AccessDenied<br/>404 NotFound<br/>412 upload-status<br/>500 other"]
+    EH -. on exception .-> Err["403 permission-denied<br/>404 not-found<br/>400 invalid-argument (too-large, size-mismatch, invalid-path)<br/>400 failed-precondition (upload-status, not-uploaded, version, not-found)<br/>409 already-exists / aborted<br/>500 internal (details.errorId)"]
 ```
 
 ### Upload lifecycle
@@ -253,6 +263,22 @@ stateDiagram-v2
     pending --> complete: confirm
     complete --> [*]: download
 ```
+
+**Preconditions.** `SetAsync`, `UpdateMetadataAsync` and `DeleteAsync` take a `FilePrecondition(Exists?, Version?)`, as
+for a database document: `FilePrecondition.IfNotExists` (`Exists: false`) only creates and fails with `already-exists`;
+`Version: n` goes ahead only if the file is still at that version, else `failed-precondition` (reason `version`, or
+`not-found` when there's no file).
+
+**Download headers.** `FileHeaders(ContentDisposition, CacheControl)` (e.g. `attachment; filename="a.pdf"`,
+`public, max-age=3600`) are set at registration (`SetAsync(headers:)`) and changed with `UpdateMetadataAsync` (null
+leaves one as is, `""` clears it). Downloads are served with the file's recorded `mimeType` and these headers: S3 signs
+them into the link as response-header overrides; the folder archive signs them into the link too (`t`, `d`, `c`), so an
+edited link is refused.
+
+**Listing.** `ListAsync(directory, FileListOptions? options)` works like Firebase's `list()`: one page of the files
+directly in the folder (`Items`) and its sub-folders as full paths (`Prefixes`), merged in name order. `""` is the top
+folder. `MaxResults` defaults to and is capped at 1,000; pass `NextPageToken` back as `PageToken` for the rest (null on
+the last page); `MimeType` filters the files.
 
 ## Access Control
 
@@ -377,7 +403,8 @@ or download straight to and from it. Pick an archive, or write one.
 
 ### S3 and S3-compatible stores
 
-`opts.UseS3Archive(s3 => …)` (`Winche.Storage.S3`): AWS S3, MinIO, Cloudflare R2, Backblaze B2, Wasabi, …
+`opts.UseS3Archive(s3 => …)` (`Winche.Storage.S3`): AWS S3, MinIO, Cloudflare R2, Backblaze B2, Wasabi, … Downloads
+carry the file's type and headers as response-header overrides signed into the link.
 
 ### A folder on disk (9.1.0)
 
@@ -401,7 +428,9 @@ an upload only up to the size the file was registered with, and only until it ex
 in a temporary file and appear whole or not at all; downloads support ranges; multipart uploads work as with S3, each
 part capped at `MaxPartBytes` and at the file's declared size. Downloads come from your app's own domain, so nothing
 uploaded can run there: they're sent with `nosniff` and a `sandbox` content-security-policy, and only images (not SVG),
-audio, video and PDF are shown in place; anything else downloads as an attachment. Several instances can share the folder if it's on shared storage. Browser apps on another
+audio, video and PDF are shown in place; anything else downloads as an attachment unless the file sets its own
+`contentDisposition`. The file's type and headers are signed into the download link (`t`, `d`, `c`), so an edited link is
+refused. Several instances can share the folder if it's on shared storage. Browser apps on another
 origin need CORS on the `/_files` routes, as they would on an S3 bucket.
 
 ### Your own
@@ -412,11 +441,12 @@ promises:
 | Member | |
 | --- | --- |
 | `GenerateUploadUrlAsync(path, mimeType, size)` | a URL the client `PUT`s the whole file to (respond with an `ETag`) |
-| `GenerateDownloadUrlAsync(path)` | a URL the client `GET`s it from |
+| `GenerateDownloadUrlAsync(path, headers)` | a URL the client `GET`s it from, served with `DownloadHeaders` (type, disposition, cache) when given |
 | `HeadAsync(path)` | the stored object's size and ETag, or null if there's none: confirming an upload checks both |
 | `DeleteAsync`, `DeleteObjectsAsync` | remove objects (a missing one isn't an error) |
 | `ListObjectsAsync(prefix)` | every object and when it changed, for the orphan sweep |
 | `IAbandonedUploads.DropAbandonedUploadsAsync` (optional) | drop unfinished multipart uploads, for archives that keep them |
+| `IArchiveContent.OpenReadAsync`, `WriteAsync` (optional) | read and write bytes from the server: `FileStorage.WriteAsync`/`OpenReadAsync` and moving files between locations |
 | `CreateMultipartUploadAsync`, `SignPartAsync`, `ListPartsAsync`, `CompleteMultipartUploadAsync`, `AbortMultipartUploadAsync` | multipart uploads: a URL per part, then assembly in part order |
 
 Anything that can hand out a URL works — another cloud's signed URLs (Azure SAS, Google Cloud Storage), or endpoints in
@@ -469,6 +499,22 @@ public class AuditHook : FileStoreHook
 
 Register: `opts.UseHooks(h => h.Add<AuditHook>("userFiles/{userId}/{file=**}"))`.
 
+## Metrics and health
+
+The meter `Winche.Storage` (`WincheStorageMetrics.MeterName`, for OpenTelemetry `.AddMeter(...)`) counts
+`winche.storage.files.registered`, `.uploads.confirmed`, `.uploads.bytes`, `.uploads.refused`, `.files.deleted`,
+`.links.signed` (tag `kind`: `upload`, `part`, `download`), `.access.denied` (tag `operation`), `.hook.deliveries` and
+`.hook.failures`.
+
+```csharp
+using Winche.Storage.AspNetCore.HealthChecks;
+
+builder.Services.AddHealthChecks().AddWincheStorageHooks();   // maxLag: 5 minutes by default
+```
+
+The check is degraded when the oldest waiting hook delivery is older than `maxLag` or there are dead letters.
+`StorageHookDeadLetters.StatusAsync()` returns the same numbers: pending, oldest pending, failing and dead letters.
+
 ## Orphan Sweep
 
 `DeleteAsync` treats Postgres as the source of truth: it **commits the row removal first**, then
@@ -479,7 +525,7 @@ undeletable record). Archive deletes never throw out of `DeleteAsync`.
 The background **orphan sweep** reclaims those leftovers, plus whatever reached a key no file uses (an old upload link),
 and multipart uploads nobody finished on archives that keep them (`IAbandonedUploads`: the folder archive; on S3 use a
 bucket lifecycle rule). Enable it with `UseOrphanSweep` (requires a
-real archive such as `UseS3Archive`):
+real archive such as `UseS3Archive` or `UseFileSystemArchive`):
 
 ```csharp
 opts.UseOrphanSweep(o =>
@@ -517,19 +563,19 @@ Task<int> PurgeOrphansAsync(string? prefix, TimeSpan graceWindow, CancellationTo
 Inject `IFileStorage` to interact with the store — it always resolves to the rules guard, which
 authorizes every call via Winche.Rules. Trusted server-side callers that have no request claims
 (background services, hooks, schedulers) should inject the concrete `FileStorage` instead, which is
-the unguarded core. This mirrors Winche.Database's `IDocumentDatabase` (guarded) vs `DocumentDatabase`
+the unguarded core (created by `AddWincheStorage`; resolve it, don't construct it). This mirrors Winche.Database's `IDocumentDatabase` (guarded) vs `DocumentDatabase`
 (unguarded) split.
 
 ```csharp
 // IFileStorage — every call is authorized via Winche.Rules
-Task<FileRecord>               SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata, FilePrecondition? precondition, CancellationToken ct);
+Task<FileRecord>               SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata, FilePrecondition? precondition, FileHeaders? headers, CancellationToken ct);
 Task<FileRecord?>              GetAsync(string path, CancellationToken ct);
-Task<FileRecord?>              UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct);
-Task<bool>                     DeleteAsync(string path, CancellationToken ct);
+Task<FileRecord?>              UpdateMetadataAsync(string path, JsonObject patch, FilePrecondition? precondition, FileHeaders? headers, CancellationToken ct);
+Task<bool>                     DeleteAsync(string path, FilePrecondition? precondition, CancellationToken ct);
 Task<UploadSession>            GenerateUploadUrlAsync(string path, CancellationToken ct);
 Task<DownloadSession>          GenerateDownloadUrlAsync(string path, CancellationToken ct);
 Task<FileRecord>               ConfirmUploadAsync(string path, CancellationToken ct);
-Task<IEnumerable<FileRecord>>  ListAsync(string directory, string? mimeType, CancellationToken ct);
+Task<FileListResult>           ListAsync(string directory, FileListOptions? options, CancellationToken ct);
 Task<UploadSession>            SignPartAsync(string path, int partNumber, CancellationToken ct);
 Task<IEnumerable<FilePart>>    ListUploadedPartsAsync(string path, CancellationToken ct);
 ```
@@ -543,6 +589,12 @@ public sealed class ReportMailer(FileStorage files)   // concrete FileStorage = 
         files.GenerateDownloadUrlAsync(path, ct);
 }
 ```
+
+The concrete `FileStorage` also has server-only members (not rule-checked): `WriteAsync(path, Stream content, mimeType,
+sizeBytes, metadata?, headers?, ct)` stores bytes without links (register, write, confirm; hooks fire as for an
+upload), `OpenReadAsync(path, ct)` returns the bytes of a complete file or null, and `DeleteUnderAsync(prefix, ct)`
+deletes every file under a folder. Bytes need an archive that can read and write them (`IArchiveContent`: S3, the
+folder archive, and the location router over them); others throw `NotSupportedException`.
 
 ### Privileged: `ListDirectoryIdsAsync`
 
@@ -587,15 +639,16 @@ public sealed class Browser(FileStorage files)   // concrete = privileged
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `id` | `string` | Unique record identifier |
+| `id` | `string` | The file's name (last path segment), as a database document's `id` |
 | `path` | `string` | Full logical path |
 | `directory` | `string` | Parent directory segment |
 | `mimeType` | `string` | MIME type |
 | `sizeBytes` | `long` | Declared file size |
-| `uploadStatus` | `UploadStatus` | `pending`, `complete`, or `failed` |
-| `uploadId` | `string?` | Multipart upload ID (when active) |
+| `uploadStatus` | `UploadStatus` | `pending` or `complete` |
 | `contentHash` | `string?` | Archive object fingerprint (ETag); set on confirm |
 | `metadata` | `JsonObject` | Arbitrary key/value metadata |
+| `contentDisposition` | `string?` | Served on downloads; omitted when null |
+| `cacheControl` | `string?` | Served on downloads; omitted when null |
 | `version` | `long` | Goes up with each registration and metadata change; `precondition.version` holds a write to it |
 | `createdAt` | `DateTime` | Creation timestamp |
 | `updatedAt` | `DateTime` | Last-modified timestamp |
@@ -604,7 +657,7 @@ public sealed class Browser(FileStorage files)   // concrete = privileged
 
 - .NET 10 SDK (`net10.0`)
 - PostgreSQL for metadata storage
-- An S3-compatible bucket for object storage (AWS S3, MinIO, etc.)
+- An archive for the bytes: an S3-compatible bucket (`Winche.Storage.S3`) or a folder (`Winche.Storage.FileSystem`)
 
 ## License
 

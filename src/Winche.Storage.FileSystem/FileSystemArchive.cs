@@ -79,13 +79,23 @@ public sealed class FileSystemArchive : IArchive, IAbandonedUploads, Winche.Stor
         return Task.FromResult(new UploadSession { Url = $"{Base()}/o/{Escape(path)}?exp={expires}&max={max}&sig={sig}", ExpiresAt = At(expires) });
     }
 
-    public Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default)
+    public Task<DownloadSession> GenerateDownloadUrlAsync(string path, DownloadHeaders? headers = null, CancellationToken ct = default)
     {
         FileOf(path);
         var expires = Expires();
-        var sig = Sign("GET", path, expires, 0);
-        return Task.FromResult(new DownloadSession { Url = $"{Base()}/o/{Escape(path)}?exp={expires}&sig={sig}", ExpiresAt = At(expires) });
+        // The headers to serve are part of what's signed, so a link can't be edited to serve the bytes as something else.
+        var (t, d, c) = (headers?.ContentType, headers?.ContentDisposition, headers?.CacheControl);
+        var sig = Sign("GET", DownloadSubject(path, t, d, c), expires, 0);
+        var query = string.Concat(
+            t is null ? "" : $"&t={Uri.EscapeDataString(t)}",
+            d is null ? "" : $"&d={Uri.EscapeDataString(d)}",
+            c is null ? "" : $"&c={Uri.EscapeDataString(c)}");
+        return Task.FromResult(new DownloadSession { Url = $"{Base()}/o/{Escape(path)}?exp={expires}{query}&sig={sig}", ExpiresAt = At(expires) });
     }
+
+    /// <summary>What a download link signs: the path, and the type and headers it's served with, when given.</summary>
+    internal static string DownloadSubject(string path, string? type, string? disposition, string? cache) =>
+        type is null && disposition is null && cache is null ? path : $"{path}\n{type}\n{disposition}\n{cache}";
 
     public async Task<ArchiveObjectInfo?> HeadAsync(string path, CancellationToken ct = default)
     {

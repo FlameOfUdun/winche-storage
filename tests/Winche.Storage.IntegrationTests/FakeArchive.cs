@@ -93,7 +93,7 @@ internal sealed class FakeArchive : IArchive
     public Task<UploadSession> SignPartAsync(string path, string uploadId, int partNumber, CancellationToken ct = default)
         => Task.FromResult(new UploadSession { Url = $"https://archive/part/{path}/{partNumber}" });
 
-    public Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default)
+    public Task<DownloadSession> GenerateDownloadUrlAsync(string path, DownloadHeaders? headers = null, CancellationToken ct = default)
         => Task.FromResult(new DownloadSession { Url = $"https://archive/get/{path}", ExpiresAt = default });
 
     public Task<IEnumerable<FilePart>> ListPartsAsync(string path, string uploadId, CancellationToken ct = default)

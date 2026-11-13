@@ -43,10 +43,36 @@ public class MetadataAndListTests(PostgresFixture fixture) : IClassFixture<Postg
         await storage.SetAsync("b/z.txt", "text/plain", 1);
 
         var inA = await storage.ListAsync("a");
-        var jsonInA = await storage.ListAsync("a", "application/json");
+        var jsonInA = await storage.ListAsync("a", new(MimeType: "application/json"));
 
-        Assert.Equal(2, inA.Count());
-        Assert.Equal(["a/y.json"], jsonInA.Select(r => r.Path));
+        Assert.Equal(2, inA.Items.Count);
+        Assert.Equal(["a/y.json"], jsonInA.Items.Select(r => r.Path));
+    }
+
+    [Fact]
+    public async Task ListAsync_pages_through_files_and_folders_in_name_order()
+    {
+        var storage = NewStorage();
+        foreach (var p in new[] { "docs/b.txt", "docs/d.txt", "docs/a/1.txt", "docs/c/2.txt", "docs/c/deeper/3.txt", "top.txt" })
+            await storage.SetAsync(p, "text/plain", 1);
+
+        var all = await storage.ListAsync("docs");
+        Assert.Equal(["docs/b.txt", "docs/d.txt"], all.Items.Select(f => f.Path));
+        Assert.Equal(["docs/a", "docs/c"], all.Prefixes);
+        Assert.Null(all.NextPageToken);
+
+        // Pages of two, merged by name: a/, b.txt | c/, d.txt.
+        var first = await storage.ListAsync("docs", new(MaxResults: 2));
+        Assert.Equal(["docs/b.txt"], first.Items.Select(f => f.Path));
+        Assert.Equal(["docs/a"], first.Prefixes);
+        var second = await storage.ListAsync("docs", new(MaxResults: 2, PageToken: first.NextPageToken));
+        Assert.Equal(["docs/d.txt"], second.Items.Select(f => f.Path));
+        Assert.Equal(["docs/c"], second.Prefixes);
+        Assert.Null(second.NextPageToken);
+
+        var top = await storage.ListAsync("");
+        Assert.Equal(["top.txt"], top.Items.Select(f => f.Path));
+        Assert.Equal(["docs"], top.Prefixes);
     }
 
     [Fact]

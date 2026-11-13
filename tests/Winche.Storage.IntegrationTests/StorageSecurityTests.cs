@@ -71,12 +71,12 @@ public class StorageSecurityTests(PostgresFixture fixture) : IClassFixture<Postg
         await a("bob").SetAsync("team/sub/bob.txt", "text/plain", 4, Owner("bob"));
 
         await Assert.ThrowsAsync<AccessDeniedException>(() => a("alice").DeleteAsync("team"));
-        Assert.Equal(3, (await core.ListAsync("team")).Count() + (await core.ListAsync("team/sub")).Count());
+        Assert.Equal(3, (await core.ListAsync("team")).Items.Count + (await core.ListAsync("team/sub")).Items.Count);
 
         await a("bob").DeleteAsync("team/sub/bob.txt");
         Assert.True(await a("alice").DeleteAsync("team"));
-        Assert.Empty(await core.ListAsync("team"));
-        Assert.Empty(await core.ListAsync("team/sub"));
+        Assert.Empty((await core.ListAsync("team")).Items);
+        Assert.Empty((await core.ListAsync("team/sub")).Items);
     }
 
     [Fact]
@@ -137,5 +137,19 @@ public class StorageSecurityTests(PostgresFixture fixture) : IClassFixture<Postg
         // A part other than the first can't start an upload: a client error, not a crash.
         await core.SetAsync("other.bin", "application/octet-stream", 10);
         Assert.Equal("no-upload", (await Assert.ThrowsAsync<StorageException>(() => core.SignPartAsync("other.bin", 2))).Error.Reason);
+    }
+
+    [Fact]
+    public async Task Updates_and_deletes_can_require_the_version_they_saw()
+    {
+        var (core, _) = Storage();
+        var file = await core.SetAsync("a.txt", "text/plain", 4);
+        await core.UpdateMetadataAsync("a.txt", new JsonObject { ["x"] = 1 }, new FilePrecondition(Version: file.Version));
+
+        var stale = await Assert.ThrowsAsync<StorageException>(() =>
+            core.UpdateMetadataAsync("a.txt", new JsonObject { ["x"] = 2 }, new FilePrecondition(Version: file.Version)));
+        Assert.Equal(("failed-precondition", "version"), (stale.Error.Code, stale.Error.Reason));
+        await Assert.ThrowsAsync<StorageException>(() => core.DeleteAsync("a.txt", new FilePrecondition(Version: file.Version)));
+        Assert.True(await core.DeleteAsync("a.txt", new FilePrecondition(Version: file.Version + 1)));
     }
 }

@@ -73,4 +73,23 @@ public class ObjectKeyTests(PostgresFixture fixture) : IClassFixture<PostgresFix
         Assert.NotEqual(old, again);
         Assert.Equal("new", System.Text.Encoding.UTF8.GetString(_archive.Files[again].Data));
     }
+
+    [Fact]
+    public async Task Server_code_writes_and_reads_bytes_without_links()
+    {
+        var storage = Storage();
+        var text = System.Text.Encoding.UTF8.GetBytes("server report");
+        var file = await storage.WriteAsync("reports/r1.txt", new MemoryStream(text), "text/plain", text.Length);
+        Assert.Equal(UploadStatus.Complete, file.UploadStatus);
+
+        await using (var read = await storage.OpenReadAsync("reports/r1.txt"))
+        {
+            using var copy = new MemoryStream();
+            await read!.CopyToAsync(copy);
+            Assert.Equal(text, copy.ToArray());
+        }
+        Assert.Null(await storage.OpenReadAsync("reports/missing.txt"));
+        await Assert.ThrowsAsync<UploadSizeMismatchException>(() =>
+            storage.WriteAsync("reports/r2.txt", new MemoryStream(text), "text/plain", text.Length + 1));   // held to its size
+    }
 }

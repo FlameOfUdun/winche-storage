@@ -1,8 +1,8 @@
 ﻿namespace Winche.Storage.Infrastructure;
 
-public readonly record struct PathInfo(string Directory, string? Id);
+internal readonly record struct PathInfo(string Directory, string? Id);
 
-public static class FilePathParser
+internal static class FilePathParser
 {
     public static PathInfo Parse(string fullPath)
     {

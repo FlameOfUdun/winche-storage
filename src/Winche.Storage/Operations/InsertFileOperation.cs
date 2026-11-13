@@ -10,21 +10,21 @@ namespace Winche.Storage.Operations;
 internal sealed class InsertFileOperation(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
     /// <summary>Registers a new file, pending its upload; null when one appeared at the path meanwhile.</summary>
-    internal async Task<FileRecord?> InsertAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata, CancellationToken ct)
+    internal async Task<FileRecord?> InsertAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata, FileHeaders? headers, CancellationToken ct)
     {
         var info = FilePathParser.Parse(path);
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
-            INSERT INTO {WincheStorageTables.Files} (id, directory, path, metadata, mime_type, size_bytes, upload_status, created_at, updated_at, version, upload_key)
-            VALUES (@id, @directory, @path, @metadata::jsonb, @mimeType, @sizeBytes, @pending, NOW(), NOW(), 1, @uploadKey)
+            INSERT INTO {WincheStorageTables.Files} (id, directory, path, metadata, mime_type, size_bytes, upload_status, created_at, updated_at, version, upload_key, content_disposition, cache_control)
+            VALUES (@id, @directory, @path, @metadata::jsonb, @mimeType, @sizeBytes, @pending, NOW(), NOW(), 1, @uploadKey, @disposition, @cache)
             ON CONFLICT (path) DO NOTHING
             RETURNING *
             """;
         cmd.Parameters.AddWithValue("id", info.Id!);
         cmd.Parameters.AddWithValue("directory", info.Directory);
         cmd.Parameters.AddWithValue("path", path);
-        Fill(cmd, path, mimeType, sizeBytes, metadata);
+        Fill(cmd, path, mimeType, sizeBytes, metadata, headers);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         return await NpgsqlFileReader.ReadSingleAsync(reader, ct);
     }
@@ -34,30 +34,35 @@ internal sealed class InsertFileOperation(NpgsqlConnection conn, NpgsqlTransacti
     /// the old upload, its multipart upload id and its content hash are forgotten, so only new bytes can complete it.
     /// Null when the file changed meanwhile.
     /// </summary>
-    internal async Task<FileRecord?> ReplaceAsync(string path, long version, string mimeType, long sizeBytes, JsonObject? metadata, CancellationToken ct)
+    internal async Task<FileRecord?> ReplaceAsync(string path, long version, string mimeType, long sizeBytes, JsonObject? metadata, FileHeaders? headers, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
             UPDATE {WincheStorageTables.Files}
             SET metadata = @metadata::jsonb, mime_type = @mimeType, size_bytes = @sizeBytes, upload_status = @pending,
-                upload_id = NULL, content_hash = NULL, upload_key = @uploadKey, updated_at = NOW(), version = version + 1
+                upload_id = NULL, content_hash = NULL, upload_key = @uploadKey, content_disposition = @disposition, cache_control = @cache,
+                updated_at = NOW(), version = version + 1
             WHERE path = @path AND version = @version
             RETURNING *
             """;
         cmd.Parameters.AddWithValue("path", path);
         cmd.Parameters.AddWithValue("version", version);
-        Fill(cmd, path, mimeType, sizeBytes, metadata);
+        Fill(cmd, path, mimeType, sizeBytes, metadata, headers);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         return await NpgsqlFileReader.ReadSingleAsync(reader, ct);
     }
 
-    private static void Fill(NpgsqlCommand cmd, string path, string mimeType, long sizeBytes, JsonObject? metadata)
+    private static void Fill(NpgsqlCommand cmd, string path, string mimeType, long sizeBytes, JsonObject? metadata, FileHeaders? headers)
     {
+        cmd.Parameters.AddWithValue("disposition", (object?)NullIfEmpty(headers?.ContentDisposition) ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("cache", (object?)NullIfEmpty(headers?.CacheControl) ?? DBNull.Value);
         cmd.Parameters.AddWithValue("uploadKey", ObjectKeys.New(path));
         cmd.Parameters.Add(new NpgsqlParameter("metadata", NpgsqlDbType.Jsonb) { Value = (metadata ?? []).ToJsonString() });
         cmd.Parameters.AddWithValue("mimeType", mimeType);
         cmd.Parameters.AddWithValue("sizeBytes", sizeBytes);
         cmd.Parameters.AddWithValue("pending", (short)UploadStatus.Pending);
     }
+
+    private static string? NullIfEmpty(string? s) => string.IsNullOrEmpty(s) ? null : s;
 }

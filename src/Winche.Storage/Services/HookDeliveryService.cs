@@ -17,7 +17,7 @@ namespace Winche.Storage.Services;
 /// kept as a dead letter. At least once: a hook may see an event again (a node died mid-call, or the lease ran out),
 /// so hooks with side effects should be idempotent.
 /// </summary>
-public sealed class HookDeliveryService(
+internal sealed class HookDeliveryService(
     [FromKeyedServices(WincheStorageKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
     HookInvocationDispatcher dispatcher,
     HookDeliveryOptions? options = null,
@@ -114,6 +114,7 @@ public sealed class HookDeliveryService(
                 _ => throw new InvalidOperationException($"Unknown hook event '{d.Kind}'."),
             });
             await ExecAsync($"DELETE FROM {T} WHERE id = $1", [d.Id]);
+            WincheStorageMetrics.HookDeliveries.Add(1);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -124,6 +125,7 @@ public sealed class HookDeliveryService(
         {
             var backoff = TimeSpan.FromSeconds(Math.Min(Math.Pow(2, d.Attempts - 1), _options.MaxBackoff.TotalSeconds));
             _logger.LogWarning(ex, "Hook {Hook} failed for {Kind} {Path} (attempt {Attempt})", d.Hook, d.Kind, d.Path, d.Attempts);
+            WincheStorageMetrics.HookFailures.Add(1);
             await TryExecAsync($"""
                 UPDATE {T} SET last_error = $2,
                     dead_at = CASE WHEN now() - created_at >= $3 THEN now() END,

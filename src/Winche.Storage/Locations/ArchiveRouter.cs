@@ -10,7 +10,7 @@ namespace Winche.Storage.Locations;
 /// The archive FileStorage uses when the location can change: new files go to the location in use; during a move,
 /// deletes reach both places, and after the switch reads fall back to the old location for files not copied yet.
 /// </summary>
-internal sealed class ArchiveRouter(SettingsArea<StorageLocationSettings> area, ArchiveLocations locations) : IArchive, IAbandonedUploads
+internal sealed class ArchiveRouter(SettingsArea<StorageLocationSettings> area, ArchiveLocations locations) : IArchive, IAbandonedUploads, IArchiveContent
 {
     // Multipart uploads begun before a switch finish where they began.
     private readonly ConcurrentDictionary<string, IArchive> _uploads = new();
@@ -31,12 +31,12 @@ internal sealed class ArchiveRouter(SettingsArea<StorageLocationSettings> area, 
     public async Task<UploadSession> GenerateUploadUrlAsync(string path, string mimeType, long sizeBytes, CancellationToken ct = default) =>
         await (await ActiveAsync(ct)).GenerateUploadUrlAsync(path, mimeType, sizeBytes, ct);
 
-    public async Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default)
+    public async Task<DownloadSession> GenerateDownloadUrlAsync(string path, DownloadHeaders? headers = null, CancellationToken ct = default)
     {
         var active = await ActiveAsync(ct);
         if (Switched && await OtherAsync(ct) is { } old && await active.HeadAsync(path, ct) is null && await old.HeadAsync(path, ct) is not null)
-            return await old.GenerateDownloadUrlAsync(path, ct);
-        return await active.GenerateDownloadUrlAsync(path, ct);
+            return await old.GenerateDownloadUrlAsync(path, headers, ct);
+        return await active.GenerateDownloadUrlAsync(path, headers, ct);
     }
 
     public async Task<ArchiveObjectInfo?> HeadAsync(string path, CancellationToken ct = default)
@@ -68,6 +68,7 @@ internal sealed class ArchiveRouter(SettingsArea<StorageLocationSettings> area, 
     {
         var active = await ActiveAsync(ct);
         var id = await active.CreateMultipartUploadAsync(path, mimeType, sizeBytes, ct);
+        if (_uploads.Count > 10_000) _uploads.Clear();   // abandoned uploads aren't removed otherwise; losing these only costs a lookup
         _uploads[id] = active;
         return id;
     }
@@ -108,4 +109,16 @@ internal sealed class ArchiveRouter(SettingsArea<StorageLocationSettings> area, 
         if (await OtherAsync(ct) is IAbandonedUploads other) dropped += await other.DropAbandonedUploadsAsync(olderThanUtc, ct);
         return dropped;
     }
+
+    public async Task<Stream?> OpenReadAsync(string path, CancellationToken ct = default)
+    {
+        var stream = await ((await ActiveAsync(ct)) as IArchiveContent ?? throw NoContent()).OpenReadAsync(path, ct);
+        if (stream is null && Switched && await OtherAsync(ct) is IArchiveContent old) stream = await old.OpenReadAsync(path, ct);
+        return stream;
+    }
+
+    public async Task WriteAsync(string path, Stream content, string? contentType, CancellationToken ct = default) =>
+        await ((await ActiveAsync(ct)) as IArchiveContent ?? throw NoContent()).WriteAsync(path, content, contentType, ct);
+
+    private static NotSupportedException NoContent() => new("This storage location can't read or write bytes from the server.");
 }

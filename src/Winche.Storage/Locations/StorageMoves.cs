@@ -6,7 +6,6 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using Winche.Core;
 using Winche.Storage.Constants;
-using Winche.Core;
 using Winche.Storage.Interfaces;
 
 namespace Winche.Storage.Locations;
@@ -63,7 +62,7 @@ public sealed class StorageMoves(
             && await Step("Make upload and download links", async () =>
             {
                 await archive.GenerateUploadUrlAsync(probe, "text/plain", text.Length, ct);
-                await archive.GenerateDownloadUrlAsync(probe, ct);
+                await archive.GenerateDownloadUrlAsync(probe, ct: ct);
             });
         var deleted = await Step("Delete it", () => archive.DeleteAsync(probe, ct));
         return new(ok && deleted, steps);

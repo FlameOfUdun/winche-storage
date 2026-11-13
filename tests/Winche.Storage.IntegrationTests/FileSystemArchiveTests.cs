@@ -67,7 +67,7 @@ public sealed class FileSystemArchiveTests(PostgresFixture fixture) : IClassFixt
         var get = await _http.GetAsync(Rel(down.Url));
         Assert.Equal("hello, files", await get.Content.ReadAsStringAsync());
         // Served from the app's own domain: text isn't shown in place, and nothing may be sniffed or run.
-        Assert.Equal("application/octet-stream", get.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("text/plain", get.Content.Headers.ContentType?.MediaType);
         Assert.Equal("attachment", get.Content.Headers.ContentDisposition?.DispositionType);
         Assert.Equal("nosniff", get.Headers.GetValues("X-Content-Type-Options").Single());
         Assert.StartsWith("sandbox", get.Headers.GetValues("Content-Security-Policy").Single());
@@ -166,6 +166,33 @@ public sealed class FileSystemArchiveTests(PostgresFixture fixture) : IClassFixt
         Assert.Equal(UploadStatus.Complete, confirmed.UploadStatus);
         var download = await storage.GenerateDownloadUrlAsync("reports/r1.pdf");
         Assert.Equal(bytes, await _http.GetByteArrayAsync(Rel(download.Url)));
+    }
+
+    [Fact]
+    public async Task Downloads_are_served_with_the_files_recorded_type_and_headers()
+    {
+        var storage = new FileStorage(fixture.DataSource, _archive, new HookInvocationDispatcher([]));
+        var bytes = Encoding.UTF8.GetBytes("<svg/>");
+        // Named .png, recorded as text, with its own disposition and caching.
+        await storage.SetAsync("pics/a.png", "text/plain", bytes.Length,
+            headers: new FileHeaders("attachment; filename=\"notes.txt\"", "public, max-age=60"));
+        Assert.Equal(HttpStatusCode.OK, (await Put((await storage.GenerateUploadUrlAsync("pics/a.png")).Url, bytes)).StatusCode);
+        await storage.ConfirmUploadAsync("pics/a.png");
+
+        var url = Rel((await storage.GenerateDownloadUrlAsync("pics/a.png")).Url);
+        var get = await _http.GetAsync(url);
+        Assert.Equal("text/plain", get.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("notes.txt", get.Content.Headers.ContentDisposition?.FileName?.Trim('"'));
+        Assert.Equal("public, max-age=60", get.Headers.CacheControl?.ToString());
+
+        // The headers are signed: a link edited to serve the bytes as something else is refused.
+        Assert.Equal(HttpStatusCode.Forbidden, (await _http.GetAsync(url.Replace("t=text%2Fplain", "t=text%2Fhtml"))).StatusCode);
+
+        // An update can change or clear them; the next link carries the change.
+        await storage.UpdateMetadataAsync("pics/a.png", [], headers: new FileHeaders(ContentDisposition: "", CacheControl: "no-store"));
+        var after = await _http.GetAsync(Rel((await storage.GenerateDownloadUrlAsync("pics/a.png")).Url));
+        Assert.Equal("attachment", after.Content.Headers.ContentDisposition?.DispositionType);   // text isn't shown in place
+        Assert.Equal("no-store", after.Headers.CacheControl?.ToString());
     }
 
     [Fact]

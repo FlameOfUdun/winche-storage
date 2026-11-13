@@ -22,13 +22,15 @@ public static class WebApplicationExtensions
         var p = prefix.TrimStart('/');
         var group = app.MapGroup($"/{p}");
 
-        group.AddEndpointFilter<ClaimsAccessor>();
+        // The first filter added runs outermost: errors from mapping the caller are answered in the shared shape too.
         group.AddEndpointFilter<ExceptionHandler>();
+        group.AddEndpointFilter<ClaimsAccessor>();
 
         group.MapPut("/{path}", async (string path, CreateFileRequest req, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
-            var file = await files.SetAsync(decoded, req.MimeType, req.SizeBytes, req.Metadata, req.Precondition, ct);
+            var file = await files.SetAsync(decoded, req.MimeType, req.SizeBytes, req.Metadata, req.Precondition,
+                new Winche.Storage.Models.FileHeaders(req.ContentDisposition, req.CacheControl), ct);
             return Results.Json(file);
         });
 
@@ -42,15 +44,17 @@ public static class WebApplicationExtensions
         group.MapPatch("/{path}", async (string path, SetMetadataRequest req, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
-            if (req.Metadata is null) throw new ArgumentException("Send the metadata to change: { \"metadata\": { key: value or null } }.");
-            var file = await files.UpdateMetadataAsync(decoded, req.Metadata, ct);
+            if (req.Metadata is null && req.ContentDisposition is null && req.CacheControl is null)
+                throw new ArgumentException("Send what to change: { \"metadata\": { key: value or null }, \"contentDisposition\", \"cacheControl\" }.");
+            var file = await files.UpdateMetadataAsync(decoded, req.Metadata ?? [], req.Precondition,
+                new Winche.Storage.Models.FileHeaders(req.ContentDisposition, req.CacheControl), ct);
             return file is null ? ExceptionHandler.NotFound(decoded) : Results.Json(file);
         });
 
-        group.MapDelete("/{path}", async (string path, IFileStorage files, CancellationToken ct) =>
+        group.MapDelete("/{path}", async (string path, [FromQuery] long? ifVersion, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
-            var deleted = await files.DeleteAsync(decoded, ct);
+            var deleted = await files.DeleteAsync(decoded, ifVersion is { } v ? new Winche.Storage.Models.FilePrecondition(Version: v) : null, ct);
             return deleted ? Results.NoContent() : ExceptionHandler.NotFound(decoded);
         });
 
@@ -77,12 +81,11 @@ public static class WebApplicationExtensions
             return Results.Json(session);
         });
 
-        group.MapPost("/{path}:list", async (string path, [FromQuery] string? mimeType, IFileStorage files, CancellationToken ct) =>
-        {
-            var decoded = DecodePath(path);
-            var records = await files.ListAsync(decoded, mimeType, ct);
-            return Results.Json(records);
-        });
+        // A folder's files and sub-folders, a page at a time ({items, prefixes, nextPageToken}); /:list is the top.
+        group.MapPost("/{path}:list", (string path, [FromQuery] string? mimeType, [FromQuery] int? maxResults, [FromQuery] string? pageToken,
+            IFileStorage files, CancellationToken ct) => ListAsync(files, DecodePath(path), mimeType, maxResults, pageToken, ct));
+        group.MapPost("/:list", ([FromQuery] string? mimeType, [FromQuery] int? maxResults, [FromQuery] string? pageToken,
+            IFileStorage files, CancellationToken ct) => ListAsync(files, "", mimeType, maxResults, pageToken, ct));
 
         group.MapPost("/{path}:signPart", async (string path, SignPartRequest req, IFileStorage files, CancellationToken ct) =>
         {
@@ -100,6 +103,9 @@ public static class WebApplicationExtensions
 
         return group;
     }
+
+    private static async Task<IResult> ListAsync(IFileStorage files, string folder, string? mimeType, int? maxResults, string? pageToken, CancellationToken ct) =>
+        Results.Json(await files.ListAsync(folder, new Winche.Storage.Models.FileListOptions(maxResults, pageToken, mimeType), ct));
 
     /// <summary>Decodes a base64url path segment (no padding, '-'/'_' alphabet) to its UTF-8 string.</summary>
     private static string DecodePath(string encoded) => WincheBase64Url.Decode(encoded);

@@ -6,7 +6,7 @@ using Winche.Storage.Interfaces;
 
 namespace Winche.Storage.Services;
 
-public sealed class SchemaManager(
+internal sealed class SchemaManager(
     [FromKeyedServices(WincheStorageKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source
 ) : ISchemaManager
 {
@@ -76,6 +76,8 @@ public sealed class SchemaManager(
             CREATE INDEX IF NOT EXISTS idx_{WincheStorageTables.Files}_object_key ON {WincheStorageTables.Files} (object_key);
             CREATE INDEX IF NOT EXISTS idx_{WincheStorageTables.Files}_upload_key ON {WincheStorageTables.Files} (upload_key);
             """;
-        await WincheSchema.EnsureAsync(source, "storage", [sql, prefixIndex, objectKeys], ct);
+        // Step 4: download headers a file can set (Firebase's contentDisposition and cacheControl).
+        const string headers = $"ALTER TABLE {WincheStorageTables.Files} ADD COLUMN IF NOT EXISTS content_disposition text, ADD COLUMN IF NOT EXISTS cache_control text";
+        await WincheSchema.EnsureAsync(source, "storage", [sql, prefixIndex, objectKeys, headers], ct);
     }
 }

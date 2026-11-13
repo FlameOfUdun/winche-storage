@@ -16,16 +16,29 @@ namespace Winche.Storage.Services;
 /// </summary>
 internal delegate Task FileCheck(RuleOperation operation, FileRecord? before, FileRecord? after, CancellationToken ct);
 
-public sealed class FileStorage(
-    [FromKeyedServices(WincheStorageKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
-    IArchive archive,
-    HookInvocationDispatcher hookDispatcher,
-    StorageLimits? limits = null
-) : IFileStorage
+public sealed class FileStorage : IFileStorage
 {
+    private readonly NpgsqlDataSource source;
+    private readonly IArchive archive;
+    private readonly HookInvocationDispatcher hookDispatcher;
+    private readonly StorageLimits? limits;
+
+    /// <summary>Made by <c>AddWincheStorage</c>; resolve <see cref="FileStorage"/> (unguarded) or <see cref="IFileStorage"/> (rule-checked).</summary>
+    internal FileStorage(
+        [FromKeyedServices(WincheStorageKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
+        IArchive archive,
+        HookInvocationDispatcher hookDispatcher,
+        StorageLimits? limits = null)
+    {
+        this.source = source;
+        this.archive = archive;
+        this.hookDispatcher = hookDispatcher;
+        this.limits = limits;
+    }
+
     public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null,
-        FilePrecondition? precondition = null, CancellationToken ct = default) =>
-        SetAsync(path, mimeType, sizeBytes, metadata, precondition, null, ct);
+        FilePrecondition? precondition = null, FileHeaders? headers = null, CancellationToken ct = default) =>
+        SetAsync(path, mimeType, sizeBytes, metadata, precondition, headers, null, ct);
 
     /// <summary>
     /// Registers a file, pending its upload: a new one, or a replacement for the file already at the path (its upload
@@ -33,7 +46,7 @@ public sealed class FileStorage(
     /// is what's written.
     /// </summary>
     internal async Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata,
-        FilePrecondition? precondition, FileCheck? check, CancellationToken ct)
+        FilePrecondition? precondition, FileHeaders? headers, FileCheck? check, CancellationToken ct)
     {
         FilePathParser.Require(path);
         if (sizeBytes < 0 || sizeBytes > limits?.MaxFileSizeBytes)
@@ -45,14 +58,15 @@ public sealed class FileStorage(
             before = await new GetFileOperation(conn, tx).ExecuteAsync(path, ct, forUpdate: true);
             precondition?.Check(path, before);
             if (check is not null)
-                await check(before is null ? RuleOperation.Create : RuleOperation.Update, before, Proposed(path, mimeType, sizeBytes, metadata, before), ct);
+                await check(before is null ? RuleOperation.Create : RuleOperation.Update, before, Proposed(path, mimeType, sizeBytes, metadata, headers, before), ct);
             var op = new InsertFileOperation(conn, tx);
             if (before is null)
-                return await op.InsertAsync(path, mimeType, sizeBytes, metadata, ct)
+                return await op.InsertAsync(path, mimeType, sizeBytes, metadata, headers, ct)
                     ?? throw (precondition?.Exists == false ? StorageException.AlreadyExists(path) : StorageException.Changed(path));
-            return await op.ReplaceAsync(path, before.Version, mimeType, sizeBytes, metadata, ct) ?? throw StorageException.Changed(path);
+            return await op.ReplaceAsync(path, before.Version, mimeType, sizeBytes, metadata, headers, ct) ?? throw StorageException.Changed(path);
         }, ct);
 
+        WincheStorageMetrics.FilesRegistered.Add(1);
         // The replaced registration's upload can never complete it now: its multipart upload and any bytes already sent
         // to its key are dropped. Confirmed bytes stay until the new upload is confirmed.
         if (before?.UploadKey is { } staleKey)
@@ -65,7 +79,7 @@ public sealed class FileStorage(
     }
 
     /// <summary>The file a registration would leave, for checks to see before it's written.</summary>
-    private static FileRecord Proposed(string path, string mimeType, long sizeBytes, JsonObject? metadata, FileRecord? before)
+    private static FileRecord Proposed(string path, string mimeType, long sizeBytes, JsonObject? metadata, FileHeaders? headers, FileRecord? before)
     {
         var info = FilePathParser.Parse(path);
         var now = DateTime.UtcNow;
@@ -74,6 +88,8 @@ public sealed class FileStorage(
             Id = info.Id!, Directory = info.Directory, Path = path, CreatedAt = before?.CreatedAt ?? now, UpdatedAt = now,
             MetaData = metadata ?? [], Version = (before?.Version ?? 0) + 1, MimeType = mimeType, SizeBytes = sizeBytes,
             UploadStatus = UploadStatus.Pending,
+            ContentDisposition = FileHeaders.Apply(null, headers?.ContentDisposition),
+            CacheControl = FileHeaders.Apply(null, headers?.CacheControl),
         };
     }
 
@@ -100,7 +116,7 @@ public sealed class FileStorage(
         }
         var deleted = 0;
         foreach (var path in paths)
-            if (await DeleteAsync(path, ct)) deleted++;
+            if (await DeleteAsync(path, ct: ct)) deleted++;
         return deleted;
     }
 
@@ -111,14 +127,16 @@ public sealed class FileStorage(
         return await new GetFileOperation(conn, null).ExecuteAsync(path, ct);
     }
 
-    public Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct = default) =>
-        UpdateMetadataAsync(path, patch, null, ct);
+    public Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, FilePrecondition? precondition = null,
+        FileHeaders? headers = null, CancellationToken ct = default) =>
+        UpdateMetadataAsync(path, patch, precondition, headers, null, ct);
 
     /// <summary>
     /// Merges <paramref name="patch"/> into the file's metadata (a null value removes the key); <paramref name="check"/>
     /// sees the file before and with the merged metadata, inside the transaction.
     /// </summary>
-    internal Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, FileCheck? check, CancellationToken ct)
+    internal Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, FilePrecondition? precondition,
+        FileHeaders? headers, FileCheck? check, CancellationToken ct)
     {
         FilePathParser.Require(path);
         return WithHooksAsync(HookEventKind.MetadataUpdated, path, async (conn, tx) =>
@@ -127,22 +145,32 @@ public sealed class FileStorage(
             if (before is null)
             {
                 if (check is not null) await check(RuleOperation.Update, null, null, ct);
+                precondition?.Check(path, null);
                 return null;
             }
-            var merged = UpdateMetadataOperation.Merge(before.MetaData, patch);
-            if (check is not null)
-                await check(RuleOperation.Update, before, before with { MetaData = merged, Version = before.Version + 1, UpdatedAt = DateTime.UtcNow }, ct);
-            return await new UpdateMetadataOperation(conn, tx).ExecuteAsync(path, before.Version, merged, ct) ?? throw StorageException.Changed(path);
+            precondition?.Check(path, before);
+            var after = before with
+            {
+                MetaData = UpdateMetadataOperation.Merge(before.MetaData, patch),
+                ContentDisposition = FileHeaders.Apply(before.ContentDisposition, headers?.ContentDisposition),
+                CacheControl = FileHeaders.Apply(before.CacheControl, headers?.CacheControl),
+                Version = before.Version + 1,
+                UpdatedAt = DateTime.UtcNow,
+            };
+            if (check is not null) await check(RuleOperation.Update, before, after, ct);
+            return await new UpdateMetadataOperation(conn, tx).ExecuteAsync(path, before.Version, after.MetaData, after.ContentDisposition, after.CacheControl, ct)
+                ?? throw StorageException.Changed(path);
         }, ct);
     }
 
-    public Task<bool> DeleteAsync(string path, CancellationToken ct = default) => DeleteAsync(path, null, ct);
+    public Task<bool> DeleteAsync(string path, FilePrecondition? precondition = null, CancellationToken ct = default) =>
+        DeleteAsync(path, precondition, null, ct);
 
     /// <summary>
     /// Deletes the file at <paramref name="path"/> and every file under <c>path/</c>, like a database document with its
     /// subcollections. <paramref name="check"/> sees each file, inside the transaction: one refusal and nothing is deleted.
     /// </summary>
-    internal async Task<bool> DeleteAsync(string path, FileCheck? check, CancellationToken ct)
+    internal async Task<bool> DeleteAsync(string path, FilePrecondition? precondition, FileCheck? check, CancellationToken ct)
     {
         FilePathParser.Require(path);
         // The database is the source of truth: commit the row removal FIRST, then clean up the
@@ -157,6 +185,7 @@ public sealed class FileStorage(
         {
             var op = new DeleteFileOperation(conn, tx);
             files = await op.SelectForUpdateAsync(path, ct);
+            precondition?.Check(path, files.FirstOrDefault(f => f.Path == path));
             if (check is not null)
             {
                 if (files.Count == 0) await check(RuleOperation.Delete, null, null, ct);
@@ -174,6 +203,7 @@ public sealed class FileStorage(
 
         // Logical delete (and its hook deliveries) is durable now, whatever happens to the archive cleanup.
         hookDispatcher.Wake();
+        WincheStorageMetrics.FilesDeleted.Add(deleted.Count);
 
         // Post-commit archive cleanup — best-effort, never throws back to the caller.
         await BestEffortAsync(async () =>
@@ -203,6 +233,7 @@ public sealed class FileStorage(
         }
 
         var session = await archive.GenerateUploadUrlAsync(UploadKeyOf(file), file.MimeType, file.SizeBytes, ct);
+        WincheStorageMetrics.LinksSigned.Add(1, new KeyValuePair<string, object?>("kind", "upload"));
         hookDispatcher.Enqueue(path, (h, t) => h.OnUploadUrlGeneratedAsync(path, session, t));
         return session;
     }
@@ -215,7 +246,9 @@ public sealed class FileStorage(
         if (file.UploadStatus != UploadStatus.Complete)
             throw new InvalidUploadStatusException(path, UploadStatus.Complete, file.UploadStatus);
 
-        var session = await archive.GenerateDownloadUrlAsync(file.ObjectKey ?? file.Path, ct);
+        var session = await archive.GenerateDownloadUrlAsync(file.ObjectKey ?? file.Path,
+            new DownloadHeaders(file.MimeType, file.ContentDisposition, file.CacheControl), ct);
+        WincheStorageMetrics.LinksSigned.Add(1, new KeyValuePair<string, object?>("kind", "download"));
         hookDispatcher.Enqueue(path, (h, t) => h.OnDownloadUrlGeneratedAsync(path, session, t));
         return session;
     }
@@ -226,6 +259,22 @@ public sealed class FileStorage(
     /// Confirming a file that's already complete returns it, so a retry is harmless.
     /// </summary>
     public async Task<FileRecord> ConfirmUploadAsync(string path, CancellationToken ct = default)
+    {
+        try
+        {
+            var confirmed = await ConfirmAsync(path, ct);
+            WincheStorageMetrics.UploadsConfirmed.Add(1);
+            WincheStorageMetrics.UploadBytes.Add(confirmed.SizeBytes);
+            return confirmed;
+        }
+        catch (Exception ex) when (ex is FileNotUploadedException or UploadSizeMismatchException or StorageException)
+        {
+            WincheStorageMetrics.UploadsRefused.Add(1);
+            throw;
+        }
+    }
+
+    private async Task<FileRecord> ConfirmAsync(string path, CancellationToken ct)
     {
         var file = await GetAsync(path, ct) ?? throw new FileRecordNotFoundException(path);
         if (file.UploadStatus == UploadStatus.Complete) return file;
@@ -289,11 +338,53 @@ public sealed class FileStorage(
         return record;
     }
 
-    public async Task<IEnumerable<FileRecord>> ListAsync(string directory, string? mimeType = null, CancellationToken ct = default)
+    /// <summary>
+    /// Server code: stores <paramref name="content"/> (<paramref name="sizeBytes"/> long) as the file at
+    /// <paramref name="path"/>, new or replacing what's there, without an upload link. Not rule-checked, like the rest
+    /// of this class; hooks and changes fire as for an upload.
+    /// </summary>
+    public async Task<FileRecord> WriteAsync(string path, Stream content, string mimeType, long sizeBytes,
+        JsonObject? metadata = null, FileHeaders? headers = null, CancellationToken ct = default)
+    {
+        if (archive is not Locations.IArchiveContent bytes)
+            throw new NotSupportedException("This archive can't take bytes from the server.");
+        var file = await SetAsync(path, mimeType, sizeBytes, metadata, null, headers, ct);
+        await bytes.WriteAsync(UploadKeyOf(file), content, mimeType, ct);
+        return await ConfirmUploadAsync(path, ct);
+    }
+
+    /// <summary>Server code: the bytes of the file at <paramref name="path"/>, or null when there's no uploaded file there.</summary>
+    public async Task<Stream?> OpenReadAsync(string path, CancellationToken ct = default)
+    {
+        if (archive is not Locations.IArchiveContent bytes)
+            throw new NotSupportedException("This archive can't hand bytes to the server.");
+        var file = await GetAsync(path, ct);
+        return file is { UploadStatus: UploadStatus.Complete } ? await bytes.OpenReadAsync(file.ObjectKey ?? file.Path, ct) : null;
+    }
+
+    /// <summary>The most a list page holds, and its default size (as Firebase).</summary>
+    public const int MaxListResults = 1000;
+
+    public async Task<FileListResult> ListAsync(string directory, FileListOptions? options = null, CancellationToken ct = default)
     {
         if (directory.Length > 0) FilePathParser.Require(directory);
+        var max = Math.Clamp(options?.MaxResults ?? MaxListResults, 1, MaxListResults);
+        var after = options?.PageToken is { } token ? DirectoryPageToken.Decode(token) : null;
+
         await using var conn = await source.OpenConnectionAsync(ct);
-        return await new ListFilesOperation(conn, null).ExecuteAsync(directory, mimeType, ct);
+        // One extra of each says whether there's more; files and folders are merged by name, as one listing.
+        var folders = await new ListDirectoryIdsOperation(conn, null).ListAsync(directory, after, max + 1, ct);
+        var files = await new ListFilesOperation(conn, null).ExecuteAsync(directory, options?.MimeType, after, max + 1, ct);
+        var names = folders.Concat(files.Select(f => f.Id)).Distinct().Order(StringComparer.Ordinal).ToList();
+        var more = names.Count > max;
+        var last = more ? names[max - 1] : null;
+        bool InPage(string name) => last is null || string.CompareOrdinal(name, last) <= 0;
+
+        var prefix = directory.Length == 0 ? "" : directory + "/";
+        return new FileListResult(
+            [.. files.Where(f => InPage(f.Id))],
+            [.. folders.Where(InPage).Select(f => prefix + f)],
+            last is null ? null : DirectoryPageToken.Encode(last));
     }
 
     /// <summary>
@@ -383,6 +474,13 @@ public sealed class FileStorage(
         pageSize is null or <= 0 ? DefaultPageSize : Math.Min(pageSize.Value, MaxPageSize);
 
     public async Task<UploadSession> SignPartAsync(string path, int partNumber, CancellationToken ct = default)
+    {
+        var link = await SignAsync(path, partNumber, ct);
+        WincheStorageMetrics.LinksSigned.Add(1, new KeyValuePair<string, object?>("kind", "part"));
+        return link;
+    }
+
+    private async Task<UploadSession> SignAsync(string path, int partNumber, CancellationToken ct)
     {
         var file = await GetAsync(path, ct)
             ?? throw new FileRecordNotFoundException(path);

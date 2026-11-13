@@ -6,9 +6,9 @@ using Winche.Storage.Models;
 
 namespace Winche.Storage.Services;
 
-public sealed class HookInvocationDispatcher(
+internal sealed class HookInvocationDispatcher(
     IEnumerable<HookRegistration> hooks
-) : IHookInvocationDispatcher
+)
 {
     private readonly IReadOnlyDictionary<HookRegistration, Channel<HookInvocation>> _channels =
         hooks.ToDictionary(h => h, _ => Channel.CreateUnbounded<HookInvocation>());

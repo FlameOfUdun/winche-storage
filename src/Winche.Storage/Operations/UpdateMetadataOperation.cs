@@ -25,19 +25,22 @@ internal sealed class UpdateMetadataOperation(NpgsqlConnection conn, NpgsqlTrans
     }
 
     /// <summary>Stores <paramref name="metadata"/> (the merged result) on the file at <paramref name="version"/>; null when it changed.</summary>
-    internal async Task<FileRecord?> ExecuteAsync(string path, long version, JsonObject metadata, CancellationToken ct)
+    internal async Task<FileRecord?> ExecuteAsync(string path, long version, JsonObject metadata, string? contentDisposition, string? cacheControl, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
             UPDATE {WincheStorageTables.Files}
-            SET metadata = @metadata::jsonb, updated_at = NOW(), version = version + 1
+            SET metadata = @metadata::jsonb, content_disposition = @disposition, cache_control = @cache,
+                updated_at = NOW(), version = version + 1
             WHERE path = @path AND version = @version
             RETURNING *
             """;
         cmd.Parameters.Add(new NpgsqlParameter("metadata", NpgsqlDbType.Jsonb) { Value = metadata.ToJsonString() });
         cmd.Parameters.AddWithValue("path", path);
         cmd.Parameters.AddWithValue("version", version);
+        cmd.Parameters.AddWithValue("disposition", (object?)contentDisposition ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("cache", (object?)cacheControl ?? DBNull.Value);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         return await NpgsqlFileReader.ReadSingleAsync(reader, ct);
     }

@@ -5,7 +5,8 @@ namespace Winche.Storage.Interfaces;
 public interface IArchive
 {
     Task<UploadSession> GenerateUploadUrlAsync(string path, string mimeType, long sizeBytes, CancellationToken ct = default);
-    Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default);
+    /// <summary>A signed link to download <paramref name="path"/>, served with <paramref name="headers"/> when given.</summary>
+    Task<DownloadSession> GenerateDownloadUrlAsync(string path, DownloadHeaders? headers = null, CancellationToken ct = default);
 
     /// <summary>The stored object's size and ETag, or null when there's none at <paramref name="path"/>.</summary>
     Task<ArchiveObjectInfo?> HeadAsync(string path, CancellationToken ct = default);

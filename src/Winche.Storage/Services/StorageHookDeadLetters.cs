@@ -46,4 +46,25 @@ public sealed class StorageHookDeadLetters([FromKeyedServices(WincheStorageKeys.
         cmd.Parameters[0].NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Bigint;
         return await cmd.ExecuteNonQueryAsync(ct);
     }
+
+    /// <summary>
+    /// How hook delivery is doing: deliveries waiting (and the oldest one's age), how many have failed at least once,
+    /// and the dead letters. For health checks and the console.
+    /// </summary>
+    public async Task<StorageHookStatus> StatusAsync(CancellationToken ct = default)
+    {
+        await using var cmd = source.CreateCommand($"""
+            SELECT count(*) FILTER (WHERE dead_at IS NULL),
+                   min(created_at) FILTER (WHERE dead_at IS NULL),
+                   count(*) FILTER (WHERE dead_at IS NULL AND attempts > 0 AND last_error IS NOT NULL),
+                   count(*) FILTER (WHERE dead_at IS NOT NULL)
+            FROM {WincheStorageTables.HookDeliveries}
+            """);
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        await r.ReadAsync(ct);
+        return new StorageHookStatus(r.GetInt64(0), r.IsDBNull(1) ? null : r.GetFieldValue<DateTimeOffset>(1), r.GetInt64(2), r.GetInt64(3));
+    }
 }
+
+/// <summary>Hook delivery at a glance: waiting deliveries, the oldest one's time, those failing, and dead letters.</summary>
+public sealed record StorageHookStatus(long Pending, DateTimeOffset? OldestPending, long Failing, long DeadLetters);

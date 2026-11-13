@@ -130,6 +130,8 @@ public class DurableHookTests(PostgresFixture fixture) : IClassFixture<PostgresF
         Assert.Equal(("registered", "docs/a.pdf", 1), (dead.Kind, dead.Path, dead.Attempts));
         Assert.Contains("boom", dead.LastError);
         Assert.Equal(["confirmed docs/a.pdf etag-single"], hook.Events);   // a dead letter doesn't block later events
+        var status = await new StorageHookDeadLetters(fixture.DataSource).StatusAsync();
+        Assert.Equal((0L, 1L), (status.Pending, status.DeadLetters));   // what the health check reports
 
         hook.FailWhen = null;
         Assert.Equal(1, await new StorageHookDeadLetters(fixture.DataSource).RetryAsync());

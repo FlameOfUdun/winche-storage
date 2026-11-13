@@ -17,22 +17,22 @@ internal sealed class RecordingFileStorage : IFileStorage
         return Task.FromResult(GetReturns);
     }
 
-    public Task<bool> DeleteAsync(string path, CancellationToken ct = default)
+    public Task<bool> DeleteAsync(string path, FilePrecondition? precondition = null, CancellationToken ct = default)
     {
         Calls.Add($"Delete:{path}");
         return Task.FromResult(DeleteReturns);
     }
 
-    public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, FilePrecondition? precondition = null, CancellationToken ct = default)
+    public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, FilePrecondition? precondition = null, FileHeaders? headers = null, CancellationToken ct = default)
     {
         Calls.Add($"Set:{path}");
         return Task.FromResult<FileRecord>(null!);
     }
-    public Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, FilePrecondition? precondition = null, FileHeaders? headers = null, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<UploadSession> GenerateUploadUrlAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<FileRecord> ConfirmUploadAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<IEnumerable<FileRecord>> ListAsync(string directory, string? mimeType = null, CancellationToken ct = default) => throw new NotImplementedException();
+    public Task<FileListResult> ListAsync(string directory, FileListOptions? options = null, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<UploadSession> SignPartAsync(string path, int partNumber, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<IEnumerable<FilePart>> ListUploadedPartsAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
 }

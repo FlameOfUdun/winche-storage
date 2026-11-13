@@ -54,4 +54,3 @@ await app.InitializeWincheStorageAsync();
 app.MapWincheStorageRestApi();
 
 app.Run();
-app.WaitForShutdown();

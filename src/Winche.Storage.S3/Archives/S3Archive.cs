@@ -97,7 +97,7 @@ public sealed class S3Archive(
         });
     }
 
-    public Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default)
+    public Task<DownloadSession> GenerateDownloadUrlAsync(string path, DownloadHeaders? headers = null, CancellationToken ct = default)
     {
         var expiresAt = DateTime.UtcNow.Add(options.PresignedUrlExpiry);
         var request = new GetPreSignedUrlRequest
@@ -108,6 +108,13 @@ public sealed class S3Archive(
             Verb = HttpVerb.GET,
             Expires = expiresAt,
         };
+        if (headers is not null)
+        {
+            // Signed into the link, so S3 answers with the file's recorded type and headers, not what was uploaded.
+            request.ResponseHeaderOverrides.ContentType = headers.ContentType;
+            if (headers.ContentDisposition is { } disposition) request.ResponseHeaderOverrides.ContentDisposition = disposition;
+            if (headers.CacheControl is { } cache) request.ResponseHeaderOverrides.CacheControl = cache;
+        }
 
         return Task.FromResult(new DownloadSession
         {

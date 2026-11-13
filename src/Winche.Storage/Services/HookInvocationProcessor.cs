@@ -5,10 +5,10 @@ using Winche.Storage.Models;
 
 namespace Winche.Storage.Services;
 
-public sealed class HookInvocationProcessor(
+internal sealed class HookInvocationProcessor(
     HookInvocationDispatcher dispatcher,
     ILogger<HookInvocationProcessor> logger
-) : BackgroundService, IHookInvocationProcessor
+) : BackgroundService
 {
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {

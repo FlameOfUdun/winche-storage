@@ -30,20 +30,20 @@ public sealed class RuleGuardedFileStorage(
     // ── Protected operations ──────────────────────────────────────────────────
 
     public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null,
-        FilePrecondition? precondition = null, CancellationToken ct = default) =>
-        Logged("storage.create", path, () => SetCoreAsync(path, mimeType, sizeBytes, metadata, precondition, ct));
+        FilePrecondition? precondition = null, FileHeaders? headers = null, CancellationToken ct = default) =>
+        Logged("storage.create", path, () => SetCoreAsync(path, mimeType, sizeBytes, metadata, precondition, headers, ct));
 
     private async Task<FileRecord> SetCoreAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata,
-        FilePrecondition? precondition, CancellationToken ct)
+        FilePrecondition? precondition, FileHeaders? headers, CancellationToken ct)
     {
         // create when the path is free, update (seeing the file it replaces) when it isn't; checked in the write's
         // transaction, so the file that was allowed is the one replaced.
         if (inner is Services.FileStorage core)
-            return await core.SetAsync(path, mimeType, sizeBytes, metadata, precondition, Check(path), ct);
+            return await core.SetAsync(path, mimeType, sizeBytes, metadata, precondition, headers, Check(path), ct);
         var before = await inner.GetAsync(path, ct);
         await AuthorizeAsync(before is null ? RuleOperation.Create : RuleOperation.Update, path, ToResource(before),
             before is null ? "create" : "update", ct, FileToResource.Incoming(path, mimeType, sizeBytes, metadata));
-        return await inner.SetAsync(path, mimeType, sizeBytes, metadata, precondition, ct);
+        return await inner.SetAsync(path, mimeType, sizeBytes, metadata, precondition, headers, ct);
     }
 
     public Task<FileRecord?> GetAsync(string path, CancellationToken ct = default) =>
@@ -56,30 +56,32 @@ public sealed class RuleGuardedFileStorage(
         return file;
     }
 
-    public Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct = default) =>
-        Logged("storage.update", path, () => UpdateMetadataCoreAsync(path, patch, ct));
+    public Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, FilePrecondition? precondition = null,
+        FileHeaders? headers = null, CancellationToken ct = default) =>
+        Logged("storage.update", path, () => UpdateMetadataCoreAsync(path, patch, precondition, headers, ct));
 
-    private async Task<FileRecord?> UpdateMetadataCoreAsync(string path, JsonObject patch, CancellationToken ct)
+    private async Task<FileRecord?> UpdateMetadataCoreAsync(string path, JsonObject patch, FilePrecondition? precondition,
+        FileHeaders? headers, CancellationToken ct)
     {
         // The rule sees the merged metadata as request.resource, so it can protect keys such as an owner.
         if (inner is Services.FileStorage core)
-            return await core.UpdateMetadataAsync(path, patch, Check(path), ct);
+            return await core.UpdateMetadataAsync(path, patch, precondition, headers, Check(path), ct);
         var resource = await FetchResourceAsync(path, ct);
         await AuthorizeAsync(RuleOperation.Update, path, resource, "update", ct);
-        return await inner.UpdateMetadataAsync(path, patch, ct);
+        return await inner.UpdateMetadataAsync(path, patch, precondition, headers, ct);
     }
 
-    public Task<bool> DeleteAsync(string path, CancellationToken ct = default) =>
-        Logged("storage.delete", path, () => DeleteCoreAsync(path, ct));
+    public Task<bool> DeleteAsync(string path, FilePrecondition? precondition = null, CancellationToken ct = default) =>
+        Logged("storage.delete", path, () => DeleteCoreAsync(path, precondition, ct));
 
-    private async Task<bool> DeleteCoreAsync(string path, CancellationToken ct)
+    private async Task<bool> DeleteCoreAsync(string path, FilePrecondition? precondition, CancellationToken ct)
     {
         // Every file the delete removes (the one at the path and all under it) must be deletable.
         if (inner is Services.FileStorage core)
-            return await core.DeleteAsync(path, Check(path), ct);
+            return await core.DeleteAsync(path, precondition, Check(path), ct);
         var resource = await FetchResourceAsync(path, ct);
         await AuthorizeAsync(RuleOperation.Delete, path, resource, "delete", ct);
-        return await inner.DeleteAsync(path, ct);
+        return await inner.DeleteAsync(path, precondition, ct);
     }
 
     public Task<UploadSession> GenerateUploadUrlAsync(string path, CancellationToken ct = default) =>
@@ -112,13 +114,13 @@ public sealed class RuleGuardedFileStorage(
         return await inner.ConfirmUploadAsync(path, ct);
     }
 
-    public Task<IEnumerable<FileRecord>> ListAsync(string directory, string? mimeType = null, CancellationToken ct = default) =>
-        Logged("storage.list", directory, () => ListCoreAsync(directory, mimeType, ct));
+    public Task<FileListResult> ListAsync(string directory, FileListOptions? options = null, CancellationToken ct = default) =>
+        Logged("storage.list", directory, () => ListCoreAsync(directory, options, ct));
 
-    private async Task<IEnumerable<FileRecord>> ListCoreAsync(string directory, string? mimeType, CancellationToken ct)
+    private async Task<FileListResult> ListCoreAsync(string directory, FileListOptions? options, CancellationToken ct)
     {
         await AuthorizeAsync(RuleOperation.List, directory, RuleValues.Null, "list", ct);
-        return await inner.ListAsync(directory, mimeType, ct);
+        return await inner.ListAsync(directory, options, ct);
     }
 
     public Task<UploadSession> SignPartAsync(string path, int partNumber, CancellationToken ct = default) =>
@@ -160,7 +162,10 @@ public sealed class RuleGuardedFileStorage(
             Provider = new FileStoreResourceProvider(inner),
         };
         if (!await engine.AllowsAsync(operation, path, request, ct))
+        {
+            Services.WincheStorageMetrics.AccessDenied.Add(1, new KeyValuePair<string, object?>("operation", method));
             throw new AccessDeniedException(path, method);
+        }
     }
 
     private async Task<Value> FetchResourceAsync(string path, CancellationToken ct)

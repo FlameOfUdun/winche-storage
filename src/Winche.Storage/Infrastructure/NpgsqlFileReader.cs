@@ -22,6 +22,8 @@ internal static class NpgsqlFileReader
         ContentHash = reader.IsDBNull(reader.GetOrdinal("content_hash")) ? null : reader.GetString(reader.GetOrdinal("content_hash")),
         ObjectKey = reader.IsDBNull(reader.GetOrdinal("object_key")) ? null : reader.GetString(reader.GetOrdinal("object_key")),
         UploadKey = reader.IsDBNull(reader.GetOrdinal("upload_key")) ? null : reader.GetString(reader.GetOrdinal("upload_key")),
+        ContentDisposition = reader.IsDBNull(reader.GetOrdinal("content_disposition")) ? null : reader.GetString(reader.GetOrdinal("content_disposition")),
+        CacheControl = reader.IsDBNull(reader.GetOrdinal("cache_control")) ? null : reader.GetString(reader.GetOrdinal("cache_control")),
     };
 
     internal static async Task<FileRecord?> ReadSingleAsync(NpgsqlDataReader reader, CancellationToken ct)

@@ -34,7 +34,7 @@ internal sealed class MemoryArchive(string name) : IArchive, IArchiveContent
 
     public Task<UploadSession> GenerateUploadUrlAsync(string path, string mimeType, long sizeBytes, CancellationToken ct = default) =>
         Task.FromResult(new UploadSession { Url = $"mem://{name}/{path}" });
-    public Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default) =>
+    public Task<DownloadSession> GenerateDownloadUrlAsync(string path, DownloadHeaders? headers = null, CancellationToken ct = default) =>
         Task.FromResult(new DownloadSession { Url = $"mem://{name}/{path}", ExpiresAt = default });
     public Task<ArchiveObjectInfo?> HeadAsync(string path, CancellationToken ct = default) =>
         Task.FromResult(Files.TryGetValue(path, out var f) ? new ArchiveObjectInfo(f.Data.Length, $"\"{f.Data.Length}\"") : (ArchiveObjectInfo?)null);

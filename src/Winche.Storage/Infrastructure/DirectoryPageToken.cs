@@ -6,7 +6,7 @@ namespace Winche.Storage.Infrastructure;
 /// Opaque pagination cursor for ListDirectoryIds. The token is the base64 of the
 /// last returned directory id; callers must treat it as opaque.
 /// </summary>
-public static class DirectoryPageToken
+internal static class DirectoryPageToken
 {
     public static string Encode(string directoryId) =>
         Convert.ToBase64String(Encoding.UTF8.GetBytes(directoryId));

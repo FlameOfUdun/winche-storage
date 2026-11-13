@@ -60,21 +60,24 @@ public static class FileSystemArchiveExtensions
         group.MapGet("/o/{**path}", (string path, HttpRequest request) =>
         {
             path = Uri.UnescapeDataString(path);
-            if (!archive.Verify("GET", path, request.Query["exp"], null, request.Query["sig"], out _)) return Results.StatusCode(403);
+            string? t = request.Query["t"], d = request.Query["d"], c = request.Query["c"];
+            if (!archive.Verify("GET", FileSystemArchive.DownloadSubject(path, t, d, c), request.Query["exp"], null, request.Query["sig"], out _))
+                return Results.StatusCode(403);
             string file;
             try { file = archive.FileOf(path); }
             catch (ArgumentException) { return Results.BadRequest(); }
             if (!File.Exists(file)) return Results.NotFound();
             // Served from the app's own domain, so nothing a client uploaded may run here: the browser mustn't guess a
             // type (nosniff), a page is sandboxed (no scripts, no origin), and only media and PDF are shown in place.
+            // The file's recorded type and headers come signed in the link; otherwise the type is guessed from the name.
             var headers = request.HttpContext.Response.Headers;
-            headers.CacheControl = "private, max-age=300";
+            headers.CacheControl = c ?? "private, max-age=300";
             headers.XContentTypeOptions = "nosniff";
             headers.ContentSecurityPolicy = "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'";
-            var type = types.TryGetContentType(file, out var t) ? t : "application/octet-stream";
-            if (!ShownInPlace(type))
+            var type = t ?? (types.TryGetContentType(file, out var guessed) ? guessed : "application/octet-stream");
+            if (d is not null) headers.ContentDisposition = d;   // the file's own choice; the sandbox still applies
+            else if (!ShownInPlace(type))
             {
-                type = "application/octet-stream";
                 var disposition = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("attachment");
                 disposition.SetHttpFileName(Path.GetFileName(file));
                 headers.ContentDisposition = disposition.ToString();

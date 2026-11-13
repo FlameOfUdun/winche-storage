@@ -33,7 +33,7 @@ public sealed class WincheStorageOptions
 
     /// <summary>
     /// Largest file a client may register, in bytes; null (the default) means no limit beyond the
-    /// archive's own. A larger declared size is refused when the record is created (413 over REST), and
+    /// archive's own. A larger declared size is refused when the record is created (invalid-argument, reason too-large, over REST), and
     /// a multipart upload whose parts don't add up to the declared size is refused at confirmation, so
     /// the limit holds for the bytes actually stored. For per-path limits, write a create rule on
     /// <c>request.resource.sizeBytes</c>.
@@ -111,16 +111,16 @@ public sealed class WincheStorageOptions
     }
 
     /// <summary>
-    /// Registers file lifecycle hooks via a fluent builder, binding each hook to a Firestore-style
-    /// path pattern at registration time. Multiple calls accumulate — each binding is registered as a
-    /// singleton so that <c>GetServices&lt;HookRegistration&gt;()</c> returns them all at startup.
-    /// </summary>
-    /// <summary>
     /// How file hooks are delivered (retries, lease, dead letters). File changes reach their hooks durably and at
     /// least once; see <see cref="Models.HookDeliveryOptions"/>.
     /// </summary>
     public Models.HookDeliveryOptions HookDelivery { get; set; } = new();
 
+    /// <summary>
+    /// Registers file lifecycle hooks via a fluent builder, binding each hook to a Firestore-style
+    /// path pattern at registration time. Multiple calls accumulate — each binding is registered as a
+    /// singleton so that <c>GetServices&lt;HookRegistration&gt;()</c> returns them all at startup.
+    /// </summary>
     public WincheStorageOptions UseHooks(Action<HookBuilder> configure)
     {
         var builder = new HookBuilder(Services);
@@ -158,6 +158,7 @@ public sealed class HookBuilder(IServiceCollection services)
     /// </summary>
     public HookBuilder Add<THook>(string path) where THook : Abstraction.FileStoreHook
     {
+        Winche.PathPattern.Parse(path);   // a bad pattern fails here, at startup, not in every file change
         services.TryAddSingleton<THook>();
         services.AddSingleton(sp => new Abstraction.HookRegistration(path, sp.GetRequiredService<THook>()));
         return this;
@@ -166,6 +167,7 @@ public sealed class HookBuilder(IServiceCollection services)
     /// <summary>Registers a pre-constructed <paramref name="hook"/> instance bound to <paramref name="path"/>.</summary>
     public HookBuilder Add(string path, Abstraction.FileStoreHook hook)
     {
+        Winche.PathPattern.Parse(path);
         services.AddSingleton(new Abstraction.HookRegistration(path, hook));
         return this;
     }
