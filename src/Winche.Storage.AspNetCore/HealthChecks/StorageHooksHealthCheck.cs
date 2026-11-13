@@ -5,10 +5,10 @@ using Winche.Storage.Services;
 namespace Winche.Storage.AspNetCore.HealthChecks;
 
 /// <summary>
-/// Degraded when file hooks fall behind (the oldest waiting delivery is older than <c>maxLag</c>) or some gave up
+/// Degraded when file hooks fall behind (the oldest change a hook hasn't taken is older than <c>maxLag</c>) or some gave up
 /// (dead letters); the counts are in the result's data.
 /// </summary>
-public sealed class StorageHooksHealthCheck(StorageHookDeadLetters hooks, TimeSpan maxLag) : IHealthCheck
+public sealed class StorageHooksHealthCheck(StorageHooks hooks, TimeSpan maxLag) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken ct = default)
     {
@@ -21,11 +21,11 @@ public sealed class StorageHooksHealthCheck(StorageHookDeadLetters hooks, TimeSp
 
         var data = new Dictionary<string, object>
         {
-            ["pending"] = status.Pending, ["failing"] = status.Failing, ["deadLetters"] = status.DeadLetters,
+            ["failing"] = status.Failing, ["deadLetters"] = status.DeadLetters,
         };
         var problems = new List<string>();
         if (status.OldestPending is { } oldest && DateTimeOffset.UtcNow - oldest > maxLag)
-            problems.Add($"the oldest waiting delivery is from {oldest:u}");
+            problems.Add($"a hook still has a change from {oldest:u} to take");
         if (status.DeadLetters > 0) problems.Add($"{status.DeadLetters} dead letter(s)");
         return problems.Count == 0 ? HealthCheckResult.Healthy(data: data) : HealthCheckResult.Degraded(string.Join("; ", problems), data: data);
     }
@@ -38,7 +38,7 @@ public static class StorageHooksHealthCheckExtensions
         this IHealthChecksBuilder builder, string name = "winche-storage-hooks", TimeSpan? maxLag = null, IEnumerable<string>? tags = null) =>
         builder.Add(new HealthCheckRegistration(
             name,
-            sp => new StorageHooksHealthCheck(sp.GetRequiredService<StorageHookDeadLetters>(), maxLag ?? TimeSpan.FromMinutes(5)),
+            sp => new StorageHooksHealthCheck(sp.GetRequiredService<StorageHooks>(), maxLag ?? TimeSpan.FromMinutes(5)),
             HealthStatus.Degraded,
             tags));
 }

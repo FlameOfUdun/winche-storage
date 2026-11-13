@@ -195,13 +195,13 @@ public sealed class FileStorage : IFileStorage
             deleted = await op.ExecuteAsync([.. files.Select(f => f.Path)], ct);
             files = [.. files.Where(f => deleted.Contains(f.Path))];
             foreach (var p in deleted)
-                await HookOutbox.AddAsync(conn, tx, hookDispatcher.Registrations, HookEventKind.Deleted, p, null, ct);
+                await StorageFeed.AppendAsync(conn, tx, HookEventKind.Deleted, p, null, ct);
             await tx.CommitAsync(ct);
         }
 
         if (deleted.Count == 0) return false;
 
-        // Logical delete (and its hook deliveries) is durable now, whatever happens to the archive cleanup.
+        // Logical delete (and its feed entries for hooks) is durable now, whatever happens to the archive cleanup.
         hookDispatcher.Wake();
         WincheStorageMetrics.FilesDeleted.Add(deleted.Count);
 
@@ -319,8 +319,8 @@ public sealed class FileStorage : IFileStorage
     private static string UploadKeyOf(FileRecord file) => file.UploadKey ?? file.Path;
 
     /// <summary>
-    /// Runs a file change and writes its hook deliveries in one transaction, so a committed change always reaches its
-    /// hooks (<see cref="HookDeliveryService"/>), even across a restart. A null result (no such file) delivers nothing.
+    /// Runs a file change and records it in storage's feed in one transaction, so a committed change always reaches its
+    /// hooks (<see cref="StorageHookService"/>), even across a restart. A null result (no such file) delivers nothing.
     /// </summary>
     private async Task<FileRecord?> WithHooksAsync(string kind, string path,
         Func<NpgsqlConnection, NpgsqlTransaction, Task<FileRecord?>> change, CancellationToken ct)
@@ -331,7 +331,7 @@ public sealed class FileStorage : IFileStorage
         {
             record = await change(conn, tx);
             if (record is not null)
-                await HookOutbox.AddAsync(conn, tx, hookDispatcher.Registrations, kind, path, record, ct);
+                await StorageFeed.AppendAsync(conn, tx, kind, path, record, ct);
             await tx.CommitAsync(ct);
         }
         if (record is not null) hookDispatcher.Wake();

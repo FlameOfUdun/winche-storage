@@ -78,6 +78,9 @@ internal sealed class SchemaManager(
             """;
         // Step 4: download headers a file can set (Firebase's contentDisposition and cacheControl).
         const string headers = $"ALTER TABLE {WincheStorageTables.Files} ADD COLUMN IF NOT EXISTS content_disposition text, ADD COLUMN IF NOT EXISTS cache_control text";
-        await WincheSchema.EnsureAsync(source, "storage", [sql, prefixIndex, objectKeys, headers], ct);
+        // Step 5: hooks consume storage's change feed (Winche.Core); the per-hook outbox is gone with what it held.
+        const string feed = $"DROP TABLE IF EXISTS {WincheStorageTables.HookDeliveries};";
+        await WincheSchema.EnsureAsync(source, "storage", [sql, prefixIndex, objectKeys, headers, feed + Winche.Core.Feeds.WincheEventFeed.TableSql(WincheStorageTables.Feed)], ct);
+        await Winche.Core.Feeds.WincheFeedTables.EnsureAsync(source, ct);
     }
 }

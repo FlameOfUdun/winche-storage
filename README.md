@@ -469,20 +469,23 @@ single-segment captures, and a trailing `{name=**}` recursive wildcard matching 
 segments; bare `*`/`**` are not valid). The same hook type can be bound to multiple paths. Hooks are
 dispatched asynchronously.
 
-**Delivery (8.3.0).** File changes — registered, upload confirmed, metadata updated, deleted — reach their hooks
-durably: each change writes one delivery per matching hook to `winche_storage_hook_deliveries` **in the same
-transaction**, and a background worker on every node runs them (`FOR UPDATE SKIP LOCKED`: each delivery on one
-node). So:
+**Delivery.** File changes — registered, upload confirmed, metadata updated, deleted — are written to storage's
+change feed (`winche_files_feed`) **in the same transaction** as the change, and each hook is a durable consumer of
+that feed with its own cursor, on Winche.Core's feed runner (`Winche.Core.Feeds`, the same one Winche.Database's hooks
+use). So:
 
-- nothing is lost to a restart or a crash — undelivered changes run when a node is back;
-- a hook that throws is retried with backoff (1 s, doubling, up to 5 min); after an hour it becomes a **dead
-  letter** — `StorageHookDeadLetters` lists, retries (`RetryAsync`) or discards them; kept 7 days;
-- one file's events reach a hook in order (a failing one holds back that file's later events for that hook);
-- delivery is **at least once**: a hook may see an event twice (a node died mid-call), so make side effects
+- nothing is lost to a restart or a crash — a hook carries on from its cursor when a node is back;
+- a hook runs on one node at a time (a lease; another node takes over if that one goes);
+- a hook gets changes in the order they were committed; one that throws is retried with backoff (1 s, doubling, up to
+  30 s), holding that hook back; after an hour it becomes a **dead letter** and the hook moves on — `StorageHooks`
+  lists them (`DeadLettersAsync`), retries (`RetryAsync`) or discards them (`DeleteAsync`);
+- delivery is **at least once**: a hook may see a change twice (a node died mid-call), so make side effects
   idempotent (e.g. skip a report you already emailed).
 
-A hook's identity is its type plus path pattern: renaming either starts a new hook (undelivered rows for the old
-one are dropped after 7 days). Tune with `opts.HookDelivery = new HookDeliveryOptions { ... }`. The two URL events
+A hook's identity is its type plus path pattern (its consumer is `hooks:<type>|<pattern>`): renaming either starts a
+new hook. A hook keeps changes from when the app starting with it called `InitializeWincheStorageAsync`. Cursors and
+dead letters are in Winche.Core's shared tables (`winche_feed_cursors`, `winche_feed_dead_letters`, feed `storage`); the
+feed keeps changes for `HookDeliveryOptions.Retention` (7 days) once every hook has them. Tune with `opts.HookDelivery = new HookDeliveryOptions { ... }`. The two URL events
 (`OnUploadUrlGenerated`, `OnDownloadUrlGenerated`) change no data and stay best-effort, in memory.
 
 ```csharp
@@ -503,8 +506,9 @@ Register: `opts.UseHooks(h => h.Add<AuditHook>("userFiles/{userId}/{file=**}"))`
 
 The meter `Winche.Storage` (`WincheStorageMetrics.MeterName`, for OpenTelemetry `.AddMeter(...)`) counts
 `winche.storage.files.registered`, `.uploads.confirmed`, `.uploads.bytes`, `.uploads.refused`, `.files.deleted`,
-`.links.signed` (tag `kind`: `upload`, `part`, `download`), `.access.denied` (tag `operation`), `.hook.deliveries` and
-`.hook.failures`.
+`.links.signed` (tag `kind`: `upload`, `part`, `download`) and `.access.denied` (tag `operation`). Hook delivery is
+measured on Winche.Core's `Winche.Feed` meter (`winche.feed.delivered`, `.lag`, `.failures`, `.dead_letters`, tagged
+`feed: storage` and the hook's consumer).
 
 ```csharp
 using Winche.Storage.AspNetCore.HealthChecks;
@@ -512,8 +516,8 @@ using Winche.Storage.AspNetCore.HealthChecks;
 builder.Services.AddHealthChecks().AddWincheStorageHooks();   // maxLag: 5 minutes by default
 ```
 
-The check is degraded when the oldest waiting hook delivery is older than `maxLag` or there are dead letters.
-`StorageHookDeadLetters.StatusAsync()` returns the same numbers: pending, oldest pending, failing and dead letters.
+The check is degraded when the oldest change a hook hasn't taken is older than `maxLag` or there are dead letters.
+`StorageHooks.StatusAsync()` returns the same: oldest pending, hooks failing, dead letters; `ConsumersAsync()` per hook.
 
 ## Orphan Sweep
 

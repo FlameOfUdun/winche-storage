@@ -24,8 +24,4 @@ public static class WincheStorageMetrics
         Meter.CreateCounter<long>("winche.storage.links.signed", null, "Signed links handed out (tag kind: upload, part, download)");
     internal static readonly Counter<long> AccessDenied =
         Meter.CreateCounter<long>("winche.storage.access.denied", null, "Requests the rules refused (tag operation)");
-    internal static readonly Counter<long> HookDeliveries =
-        Meter.CreateCounter<long>("winche.storage.hook.deliveries", null, "File changes delivered to hooks");
-    internal static readonly Counter<long> HookFailures =
-        Meter.CreateCounter<long>("winche.storage.hook.failures", null, "Failed hook deliveries (retried)");
 }

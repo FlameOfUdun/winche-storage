@@ -17,5 +17,7 @@ public static class HostExtensions
     {
         using var scope = host.Services.CreateScope();
         await scope.ServiceProvider.GetRequiredService<ISchemaManager>().EnsureCreatedAsync(ct);
+        // Registered hooks keep every change from now on, even before their delivery first runs.
+        await scope.ServiceProvider.GetRequiredService<Services.StorageHooks>().TrackAsync(ct);
     }
 }

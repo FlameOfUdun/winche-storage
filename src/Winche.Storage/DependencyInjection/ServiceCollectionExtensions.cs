@@ -39,8 +39,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<HookInvocationDispatcher>();
         services.AddHostedService<HookInvocationProcessor>();
         services.AddSingleton(options.HookDelivery);
-        services.AddHostedService<HookDeliveryService>();
-        services.AddSingleton<StorageHookDeadLetters>();
+        services.AddHostedService<StorageHookService>();
+        services.AddSingleton(sp => new StorageHooks(
+            sp.GetRequiredKeyedService<Npgsql.NpgsqlDataSource>(WincheStorageKeys.DATA_SOURCE_KEY), sp.GetRequiredService<HookInvocationDispatcher>()));
+        services.AddSingleton<Winche.Core.Feeds.IWincheFeedConsumers>(sp => sp.GetRequiredService<StorageHooks>());
 
         // This package owns an isolated rules engine, registered under a package-specific key so the
         // Storage engine and the Database engine never merge. Built from this package's own UseRules
