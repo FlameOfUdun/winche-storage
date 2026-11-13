@@ -2,5 +2,5 @@
 
 namespace Winche.Storage.AspNetCore.Rest.Models
 {
-    public sealed record SetMetadataRequest(JsonObject Metadata);
+    public sealed record SetMetadataRequest(JsonObject? Metadata);
 }

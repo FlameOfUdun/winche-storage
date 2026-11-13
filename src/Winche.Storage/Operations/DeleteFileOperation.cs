@@ -6,57 +6,38 @@ using Winche.Storage.Models;
 
 namespace Winche.Storage.Operations;
 
-internal sealed record FileDeleteCandidate(string Path, string? UploadId, UploadStatus UploadStatus);
-
 internal sealed class DeleteFileOperation(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
-    internal async Task<IReadOnlyList<FileDeleteCandidate>> SelectForUpdateAsync(string path, CancellationToken ct)
+    /// <summary>The file at <paramref name="path"/> and every file under <c>path/</c>, locked until the transaction ends.</summary>
+    internal async Task<IReadOnlyList<FileRecord>> SelectForUpdateAsync(string path, CancellationToken ct)
     {
-        if (!FilePathParser.IsValidPath(path, out var error))
-            throw new ArgumentException(error);
-
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
-            SELECT path, upload_id, upload_status
-            FROM {WincheStorageTables.Files}
+            SELECT * FROM {WincheStorageTables.Files}
             WHERE path = @path OR path LIKE @prefix ESCAPE '\'
+            ORDER BY path
             FOR UPDATE
             """;
         cmd.Parameters.AddWithValue("path", path);
         cmd.Parameters.AddWithValue("prefix", WincheSql.EscapeLike(path) + "/%");
-
-        var results = new List<FileDeleteCandidate>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-        {
-            var p = reader.GetString(0);
-            var uploadId = await reader.IsDBNullAsync(1, ct) ? null : reader.GetString(1);
-            var status = (UploadStatus)reader.GetInt16(2);
-            results.Add(new FileDeleteCandidate(p, uploadId, status));
-        }
-        return results;
+        return await NpgsqlFileReader.ReadAllAsync(reader, ct);
     }
 
-    internal async Task<IReadOnlyList<string>> ExecuteAsync(string path, CancellationToken ct)
+    /// <summary>
+    /// Deletes exactly <paramref name="paths"/> (the files selected and checked), never a file that appeared under the
+    /// folder meanwhile.
+    /// </summary>
+    internal async Task<IReadOnlyList<string>> ExecuteAsync(IReadOnlyList<string> paths, CancellationToken ct)
     {
-        if (!FilePathParser.IsValidPath(path, out var error))
-            throw new ArgumentException(error);
-
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = $"""
-            DELETE FROM {WincheStorageTables.Files}
-            WHERE path = @path OR path LIKE @prefix ESCAPE '\'
-            RETURNING path
-            """;
-        cmd.Parameters.AddWithValue("path", path);
-        cmd.Parameters.AddWithValue("prefix", WincheSql.EscapeLike(path) + "/%");
-
+        cmd.CommandText = $"DELETE FROM {WincheStorageTables.Files} WHERE path = ANY(@paths) RETURNING path";
+        cmd.Parameters.AddWithValue("paths", paths.ToArray());
         var deleted = new List<string>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-            deleted.Add(reader.GetString(0));
+        while (await reader.ReadAsync(ct)) deleted.Add(reader.GetString(0));
         return deleted;
     }
 }

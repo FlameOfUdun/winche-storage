@@ -118,7 +118,7 @@ public sealed class S3Archive(
 
     private static string? NormalizeETag(string? etag) => etag?.Trim('"');
 
-    public async Task<string?> GetObjectETagAsync(string path, CancellationToken ct = default)
+    public async Task<ArchiveObjectInfo?> HeadAsync(string path, CancellationToken ct = default)
     {
         try
         {
@@ -127,7 +127,7 @@ public sealed class S3Archive(
                 BucketName = options.BucketName,
                 Key = path,
             }, ct);
-            return NormalizeETag(meta.ETag);
+            return new ArchiveObjectInfo(meta.ContentLength, NormalizeETag(meta.ETag));
         }
         catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
@@ -204,7 +204,7 @@ public sealed class S3Archive(
         while (continuationToken is not null);
     }
 
-    public async Task<string> CreateMultipartUploadAsync(string path, string mimeType, CancellationToken ct = default)
+    public async Task<string> CreateMultipartUploadAsync(string path, string mimeType, long sizeBytes, CancellationToken ct = default)
     {
         var response = await s3.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest
         {
@@ -236,7 +236,10 @@ public sealed class S3Archive(
         });
     }
 
-    public async Task<string?> CompleteMultipartUploadAsync(string path, string uploadId, CancellationToken ct = default)
+    public Task<string?> CompleteMultipartUploadAsync(string path, string uploadId, CancellationToken ct = default) =>
+        Mapped(path, () => CompleteAsync(path, uploadId, ct));
+
+    private async Task<string?> CompleteAsync(string path, string uploadId, CancellationToken ct)
     {
         var parts = new List<PartDetail>();
         string? marker = null;
@@ -267,7 +270,10 @@ public sealed class S3Archive(
         return NormalizeETag(resp.ETag);
     }
 
-    public async Task<IEnumerable<FilePart>> ListPartsAsync(string path, string uploadId, CancellationToken ct = default)
+    public Task<IEnumerable<FilePart>> ListPartsAsync(string path, string uploadId, CancellationToken ct = default) =>
+        Mapped(path, () => PartsAsync(path, uploadId, ct));
+
+    private async Task<IEnumerable<FilePart>> PartsAsync(string path, string uploadId, CancellationToken ct)
     {
         var parts = new List<PartDetail>();
         string? marker = null;
@@ -306,6 +312,18 @@ public sealed class S3Archive(
         catch (AmazonS3Exception ex) when (string.Equals(ex.ErrorCode, "NoSuchUpload", StringComparison.Ordinal))
         {
             // Already aborted or completed — idempotent.
+        }
+    }
+
+    /// <summary>S3's answers about a multipart upload that can't go on, as the storage errors a client can act on.</summary>
+    private static async Task<T> Mapped<T>(string path, Func<Task<T>> call)
+    {
+        try { return await call(); }
+        catch (AmazonS3Exception ex) when (ex.ErrorCode == "NoSuchUpload") { throw StorageException.UploadGone(path); }
+        catch (AmazonS3Exception ex) when (ex.ErrorCode is "InvalidPart" or "InvalidPartOrder" or "EntityTooSmall")
+        {
+            throw new StorageException(new WincheError(WincheErrorCode.FailedPrecondition,
+                $"The parts uploaded for {path} don't make a file ({ex.ErrorCode}); start the upload again.", "upload-invalid"));
         }
     }
 }

@@ -64,6 +64,9 @@ public sealed class SchemaManager(
             """;
 
         // Numbered steps under one lock (Winche.Core): new tables or columns go in a new step.
-        await WincheSchema.EnsureAsync(source, "storage", [sql], ct);
+        // Step 2: deletes match a file and everything under it (path LIKE 'a/b/%'), which the primary key can't serve
+        // unless the database's collation is C.
+        const string prefixIndex = $"CREATE INDEX IF NOT EXISTS idx_{WincheStorageTables.Files}_path_prefix ON {WincheStorageTables.Files} (path text_pattern_ops)";
+        await WincheSchema.EnsureAsync(source, "storage", [sql, prefixIndex], ct);
     }
 }

@@ -60,13 +60,17 @@ public sealed class FileSystemArchiveTests(PostgresFixture fixture) : IClassFixt
         var put = await Put(up.Url, bytes);
         Assert.Equal(HttpStatusCode.OK, put.StatusCode);
         Assert.Equal($"\"{Convert.ToHexStringLower(MD5.HashData(bytes))}\"", put.Headers.ETag?.Tag);
-        Assert.Equal(put.Headers.ETag?.Tag, await _archive.GetObjectETagAsync("users/u1/notes v1.txt"));
+        Assert.Equal(put.Headers.ETag?.Tag, (await _archive.HeadAsync("users/u1/notes v1.txt"))?.ETag);
         Assert.True(File.Exists(Path.Combine(_root, "objects", "users", "u1", "notes v1.txt")));
 
         var down = await _archive.GenerateDownloadUrlAsync("users/u1/notes v1.txt");
         var get = await _http.GetAsync(Rel(down.Url));
         Assert.Equal("hello, files", await get.Content.ReadAsStringAsync());
-        Assert.Equal("text/plain", get.Content.Headers.ContentType?.MediaType);
+        // Served from the app's own domain: text isn't shown in place, and nothing may be sniffed or run.
+        Assert.Equal("application/octet-stream", get.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("attachment", get.Content.Headers.ContentDisposition?.DispositionType);
+        Assert.Equal("nosniff", get.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.StartsWith("sandbox", get.Headers.GetValues("Content-Security-Policy").Single());
 
         using var range = new HttpRequestMessage(HttpMethod.Get, Rel(down.Url)) { Headers = { Range = new(7, 11) } };
         var partial = await _http.SendAsync(range);
@@ -77,7 +81,7 @@ public sealed class FileSystemArchiveTests(PostgresFixture fixture) : IClassFixt
         await foreach (var o in _archive.ListObjectsAsync("users/")) keys.Add(o.Key);
         Assert.Equal(["users/u1/notes v1.txt"], keys);
         await _archive.DeleteAsync("users/u1/notes v1.txt");
-        Assert.Null(await _archive.GetObjectETagAsync("users/u1/notes v1.txt"));
+        Assert.Null((await _archive.HeadAsync("users/u1/notes v1.txt"))?.ETag);
         Assert.False(Directory.Exists(Path.Combine(_root, "objects", "users")));   // empty folders go too
     }
 
@@ -96,7 +100,7 @@ public sealed class FileSystemArchiveTests(PostgresFixture fixture) : IClassFixt
 
         // More bytes than were declared: refused, nothing kept.
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, (await Put(up.Url, [1, 2, 3, 4, 5])).StatusCode);
-        Assert.Null(await _archive.GetObjectETagAsync("a/b.bin"));
+        Assert.Null(await _archive.HeadAsync("a/b.bin"));
         Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, "objects"), "*", SearchOption.AllDirectories));
 
         // An expired URL.
@@ -116,7 +120,7 @@ public sealed class FileSystemArchiveTests(PostgresFixture fixture) : IClassFixt
     [Fact]
     public async Task Multipart_uploads_assemble_in_order()
     {
-        var id = await _archive.CreateMultipartUploadAsync("big/file.bin", "application/octet-stream");
+        var id = await _archive.CreateMultipartUploadAsync("big/file.bin", "application/octet-stream", 2010);
         var parts = new[] { new byte[1000], new byte[1000], new byte[10] };
         for (var i = 0; i < parts.Length; i++) Array.Fill(parts[i], (byte)(i + 1));
         // Out of order on purpose.
@@ -130,10 +134,12 @@ public sealed class FileSystemArchiveTests(PostgresFixture fixture) : IClassFixt
 
         Assert.Equal([1000L, 1000L, 10L], (await _archive.ListPartsAsync("big/file.bin", id)).Select(p => p.Size));
         Assert.NotNull(await _archive.CompleteMultipartUploadAsync("big/file.bin", id));
+        // The upload is gone now: its parts can't be listed or signed again.
+        await Assert.ThrowsAsync<StorageException>(() => _archive.ListPartsAsync("big/file.bin", id));
         var all = await File.ReadAllBytesAsync(Path.Combine(_root, "objects", "big", "file.bin"));
         Assert.Equal(parts.SelectMany(p => p).ToArray(), all);
         Assert.False(Directory.Exists(Path.Combine(_root, "parts", id)));
-        Assert.Null(await _archive.CompleteMultipartUploadAsync("big/file.bin", id));   // already done
+        await Assert.ThrowsAsync<StorageException>(() => _archive.CompleteMultipartUploadAsync("big/file.bin", id));   // already done
     }
 
     [Fact]

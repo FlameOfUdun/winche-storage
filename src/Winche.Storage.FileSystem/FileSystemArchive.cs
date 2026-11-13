@@ -87,10 +87,10 @@ public sealed class FileSystemArchive : IArchive, Winche.Storage.Locations.IArch
         return Task.FromResult(new DownloadSession { Url = $"{Base()}/o/{Escape(path)}?exp={expires}&sig={sig}", ExpiresAt = At(expires) });
     }
 
-    public async Task<string?> GetObjectETagAsync(string path, CancellationToken ct = default)
+    public async Task<ArchiveObjectInfo?> HeadAsync(string path, CancellationToken ct = default)
     {
         var file = FileOf(path);
-        return File.Exists(file) ? await ETagAsync(file, ct) : null;
+        return File.Exists(file) ? new ArchiveObjectInfo(new FileInfo(file).Length, await ETagAsync(file, ct)) : null;
     }
 
     public Task DeleteAsync(string path, CancellationToken ct = default)
@@ -119,29 +119,41 @@ public sealed class FileSystemArchive : IArchive, Winche.Storage.Locations.IArch
         }
     }
 
-    public Task<string> CreateMultipartUploadAsync(string path, string mimeType, CancellationToken ct = default)
+    public Task<string> CreateMultipartUploadAsync(string path, string mimeType, long sizeBytes, CancellationToken ct = default)
     {
         FileOf(path);
         var id = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
         Directory.CreateDirectory(PartsOf(id));
         File.WriteAllText(Path.Combine(PartsOf(id), "path"), path);
+        File.WriteAllText(Path.Combine(PartsOf(id), "size"), sizeBytes.ToString(CultureInfo.InvariantCulture));
         return Task.FromResult(id);
     }
 
     public Task<UploadSession> SignPartAsync(string path, string uploadId, int partNumber, CancellationToken ct = default)
     {
+        // No part can hold more than the whole file, so a part link never lets a client store more than it declared.
+        var dir = UploadOf(path, uploadId);
+        var declared = long.Parse(File.ReadAllText(Path.Combine(dir, "size")), CultureInfo.InvariantCulture);
+        var max = Math.Max(1, Math.Min(_options.MaxPartBytes, declared));
         var expires = Expires();
-        var sig = Sign("PART", $"{uploadId}/{partNumber}", expires, _options.MaxPartBytes);
+        var sig = Sign("PART", $"{uploadId}/{partNumber}", expires, max);
         return Task.FromResult(new UploadSession
         {
-            Url = $"{Base()}/p/{uploadId}/{partNumber}?exp={expires}&max={_options.MaxPartBytes}&sig={sig}", ExpiresAt = At(expires),
+            Url = $"{Base()}/p/{uploadId}/{partNumber}?exp={expires}&max={max}&sig={sig}", ExpiresAt = At(expires),
         });
+    }
+
+    /// <summary>The parts folder of a multipart upload of <paramref name="path"/>; throws when there's no such upload.</summary>
+    private string UploadOf(string path, string uploadId)
+    {
+        var dir = PartsOf(uploadId);
+        if (!Directory.Exists(dir) || File.ReadAllText(Path.Combine(dir, "path")) != path) throw StorageException.UploadGone(path);
+        return dir;
     }
 
     public async Task<string?> CompleteMultipartUploadAsync(string path, string uploadId, CancellationToken ct = default)
     {
-        var dir = PartsOf(uploadId);
-        if (!Directory.Exists(dir) || File.ReadAllText(Path.Combine(dir, "path")) != path) return null;
+        var dir = UploadOf(path, uploadId);
         var file = FileOf(path);
         var temp = TempBeside(file);
         await using (var output = File.Create(temp))
@@ -154,7 +166,7 @@ public sealed class FileSystemArchive : IArchive, Winche.Storage.Locations.IArch
     }
 
     public Task<IEnumerable<FilePart>> ListPartsAsync(string path, string uploadId, CancellationToken ct = default) =>
-        Task.FromResult<IEnumerable<FilePart>>(Directory.Exists(PartsOf(uploadId)) ? Parts(PartsOf(uploadId)) : []);
+        Task.FromResult<IEnumerable<FilePart>>(Parts(UploadOf(path, uploadId)));
 
     public Task AbortMultipartUploadAsync(string path, string uploadId, CancellationToken ct = default)
     {

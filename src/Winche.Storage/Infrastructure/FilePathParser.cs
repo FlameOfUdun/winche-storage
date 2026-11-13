@@ -18,23 +18,33 @@ public static class FilePathParser
         var id = segments.LastOrDefault();
         return new PathInfo(directory, id);
     }
+    /// <summary>The longest path, in UTF-8 bytes (Firebase Storage's limit).</summary>
+    public const int MaxPathBytes = 1024;
 
-    public static bool IsValidPath(string path, out string? error)
+    /// <summary>
+    /// Whether <paramref name="path"/> is a file path in its one accepted form: segments joined by single <c>/</c>, none
+    /// empty (so no leading, trailing or doubled <c>/</c>), none <c>.</c> or <c>..</c>, no <c>\</c> or control
+    /// characters, at most <see cref="MaxPathBytes"/> bytes. One spelling per file, so rules, the database and every
+    /// archive agree on which file a path means.
+    /// </summary>
+    public static bool IsValidPath(string? path, out string? error)
     {
-        if (string.IsNullOrEmpty(path))
+        error = path switch
         {
-            error = "Path cannot be null or empty.";
-            return false;
-        }
+            null or "" => "it's empty",
+            _ when System.Text.Encoding.UTF8.GetByteCount(path) > MaxPathBytes => $"it's longer than {MaxPathBytes} bytes",
+            _ when path.Any(c => char.IsControl(c)) => "it has a control character",
+            _ when path.Contains('\\') => "it has a backslash",
+            _ when path.Split('/').Any(s => s.Length == 0) => "it has an empty segment (a leading, trailing or doubled '/')",
+            _ when path.Split('/').Any(s => s is "." or "..") => "it has a '.' or '..' segment",
+            _ => null,
+        };
+        return error is null;
+    }
 
-        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length == 0)
-        {
-            error = "Path must contain at least one segment.";
-            return false;
-        }
-
-        error = null;
-        return true;
+    /// <summary>Throws an <c>invalid-argument</c> <see cref="Models.StorageException"/> unless <paramref name="path"/> is valid.</summary>
+    public static void Require(string? path)
+    {
+        if (!IsValidPath(path, out var error)) throw Models.StorageException.InvalidPath(path ?? "", error!);
     }
 }

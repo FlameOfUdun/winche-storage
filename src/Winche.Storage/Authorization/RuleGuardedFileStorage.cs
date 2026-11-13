@@ -29,15 +29,21 @@ public sealed class RuleGuardedFileStorage(
 
     // ── Protected operations ──────────────────────────────────────────────────
 
-    public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default) =>
-        Logged("storage.create", path, () => SetCoreAsync(path, mimeType, sizeBytes, metadata, ct));
+    public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null,
+        FilePrecondition? precondition = null, CancellationToken ct = default) =>
+        Logged("storage.create", path, () => SetCoreAsync(path, mimeType, sizeBytes, metadata, precondition, ct));
 
-    private async Task<FileRecord> SetCoreAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata, CancellationToken ct)
+    private async Task<FileRecord> SetCoreAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata,
+        FilePrecondition? precondition, CancellationToken ct)
     {
-        // The file being registered is request.resource, so a create rule can check its size or type.
-        var incoming = FileToResource.Incoming(path, mimeType, sizeBytes, metadata);
-        await AuthorizeAsync(RuleOperation.Create, path, RuleValues.Null, "create", ct, incoming);
-        return await inner.SetAsync(path, mimeType, sizeBytes, metadata, ct);
+        // create when the path is free, update (seeing the file it replaces) when it isn't; checked in the write's
+        // transaction, so the file that was allowed is the one replaced.
+        if (inner is Services.FileStorage core)
+            return await core.SetAsync(path, mimeType, sizeBytes, metadata, precondition, Check(path), ct);
+        var before = await inner.GetAsync(path, ct);
+        await AuthorizeAsync(before is null ? RuleOperation.Create : RuleOperation.Update, path, ToResource(before),
+            before is null ? "create" : "update", ct, FileToResource.Incoming(path, mimeType, sizeBytes, metadata));
+        return await inner.SetAsync(path, mimeType, sizeBytes, metadata, precondition, ct);
     }
 
     public Task<FileRecord?> GetAsync(string path, CancellationToken ct = default) =>
@@ -55,6 +61,9 @@ public sealed class RuleGuardedFileStorage(
 
     private async Task<FileRecord?> UpdateMetadataCoreAsync(string path, JsonObject patch, CancellationToken ct)
     {
+        // The rule sees the merged metadata as request.resource, so it can protect keys such as an owner.
+        if (inner is Services.FileStorage core)
+            return await core.UpdateMetadataAsync(path, patch, Check(path), ct);
         var resource = await FetchResourceAsync(path, ct);
         await AuthorizeAsync(RuleOperation.Update, path, resource, "update", ct);
         return await inner.UpdateMetadataAsync(path, patch, ct);
@@ -65,6 +74,9 @@ public sealed class RuleGuardedFileStorage(
 
     private async Task<bool> DeleteCoreAsync(string path, CancellationToken ct)
     {
+        // Every file the delete removes (the one at the path and all under it) must be deletable.
+        if (inner is Services.FileStorage core)
+            return await core.DeleteAsync(path, Check(path), ct);
         var resource = await FetchResourceAsync(path, ct);
         await AuthorizeAsync(RuleOperation.Delete, path, resource, "delete", ct);
         return await inner.DeleteAsync(path, ct);
@@ -130,6 +142,14 @@ public sealed class RuleGuardedFileStorage(
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>The rules check a write runs on each file it changes, inside its transaction.</summary>
+    private Services.FileCheck Check(string requested) => (operation, before, after, ct) =>
+    {
+        var path = before?.Path ?? after?.Path ?? requested;
+        var method = operation switch { RuleOperation.Create => "create", RuleOperation.Delete => "delete", _ => "update" };
+        return AuthorizeAsync(operation, path, ToResource(before), method, ct, after is null ? null : FileToResource.Convert(after));
+    };
 
     private async Task AuthorizeAsync(RuleOperation operation, string path, Value resource, string method, CancellationToken ct, Value? requestResource = null)
     {

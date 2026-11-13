@@ -170,12 +170,12 @@ uses HTTP methods; per-file operations use AIP-136 colon-verbs (all `POST`).
 
 | Method | Route | Description |
 | --- | --- | --- |
-| `PUT` | `/{path}` | Register a new file record |
+| `PUT` | `/{path}` | Register a file, new or replacing the one there (its upload starts over). Body: `mimeType`, `sizeBytes`, `metadata?`, `precondition?` (`{"exists": false}` create-only, `{"version": n}`) |
 | `GET` | `/{path}` | Get a file record |
-| `PATCH` | `/{path}` | Update file metadata |
-| `DELETE` | `/{path}` | Delete a file record; the archive object is removed best-effort afterward |
+| `PATCH` | `/{path}` | Merge into the file's metadata (`{"metadata": {...}}`; a null value removes the key) |
+| `DELETE` | `/{path}` | Delete the file and every file under `path/` (each one rule-checked; one refusal deletes nothing); archive objects are removed best-effort afterward |
 | `GET` | `/ping` | Liveness check |
-| `POST` | `/{path}:confirm` | Confirm an upload is complete |
+| `POST` | `/{path}:confirm` | Confirm the upload: the stored object must be exactly the declared size; confirming again returns the file |
 | `POST` | `/{path}:upload` | Generate a presigned upload URL |
 | `POST` | `/{path}:download` | Generate a presigned download URL |
 | `POST` | `/{path}:list` | List files in a directory (`?mimeType=` filter optional) |
@@ -202,13 +202,19 @@ flowchart LR
     CA --> EH["ExceptionHandler"]
     EH --> Handler["handler<br/>DecodePath → IFileStorage"]
     Handler --> Ok["Results.Json"]
-    EH -. on exception .-> Err["403 AccessDenied<br/>404 NotFound<br/>400 InvalidStatus<br/>500 other"]
+    EH -. on exception .-> Err["403 AccessDenied<br/>404 NotFound<br/>412 upload-status<br/>500 other"]
 ```
 
 ### Upload lifecycle
 
 A record is registered first (status `pending`), uploaded directly to the archive via presigned URLs
-(single or multipart), then confirmed (status `complete`). Downloads require `complete`:
+(single or multipart), then confirmed (status `complete`). Downloads require `complete`. Confirm checks the
+stored size against the declared one, and only completes the file it checked: if the file was replaced
+meanwhile it fails with `aborted`.
+
+**Paths** have one accepted form: segments joined by single `/` (no leading, trailing or doubled `/`), no `.` or `..`
+segments, no `\` or control characters, at most 1,024 bytes. Anything else is `invalid-argument` (reason
+`invalid-path`), so rules, the database and every archive agree on which file a path means.
 
 ```mermaid
 sequenceDiagram
@@ -296,11 +302,15 @@ Storage operations map to rule operations as follows:
 
 | `IFileStorage` call | Rule operation |
 | --- | --- |
-| `SetAsync` | `Create` |
+| `SetAsync` | `Create` when the path is free; `Update` when it replaces a file (`resource` the file replaced) |
 | `GetAsync`, `GenerateDownloadUrlAsync`, `ListUploadedPartsAsync` | `Get` |
 | `ListAsync` | `List` |
 | `UpdateMetadataAsync`, `ConfirmUploadAsync`, `GenerateUploadUrlAsync`, `SignPartAsync` | `Update` |
-| `DeleteAsync` | `Delete` |
+| `DeleteAsync` | `Delete`, for every file it removes |
+
+For `SetAsync` and `UpdateMetadataAsync`, `request.resource` is the file as it would be after the write (for metadata,
+the merged result), so a rule can protect a key: `request.resource.metadata.owner == resource.metadata.owner`.
+Writes are checked inside their transaction, so the file a rule allowed is the one changed.
 
 `ListDirectoryIdsAsync` is intentionally absent from this table: it exists only on the concrete
 `FileStorage`, never on `IFileStorage`, and is never rule-evaluated — a privileged, admin-only
@@ -383,7 +393,9 @@ app.MapWincheStorageFileSystem();   // serves the URLs, under /_files
 Upload and download URLs point at your app and are **signed** (HMAC-SHA256): each works only for its method and path,
 an upload only up to the size the file was registered with, and only until it expires (an hour by default). Uploads land
 in a temporary file and appear whole or not at all; downloads support ranges; multipart uploads work as with S3, each
-part capped at `MaxPartBytes`. Several instances can share the folder if it's on shared storage. Browser apps on another
+part capped at `MaxPartBytes` and at the file's declared size. Downloads come from your app's own domain, so nothing
+uploaded can run there: they're sent with `nosniff` and a `sandbox` content-security-policy, and only images (not SVG),
+audio, video and PDF are shown in place; anything else downloads as an attachment. Several instances can share the folder if it's on shared storage. Browser apps on another
 origin need CORS on the `/_files` routes, as they would on an S3 bucket.
 
 ### Your own
@@ -395,7 +407,7 @@ promises:
 | --- | --- |
 | `GenerateUploadUrlAsync(path, mimeType, size)` | a URL the client `PUT`s the whole file to (respond with an `ETag`) |
 | `GenerateDownloadUrlAsync(path)` | a URL the client `GET`s it from |
-| `GetObjectETagAsync(path)` | the stored object's ETag, or null if there's none: confirming an upload checks it |
+| `HeadAsync(path)` | the stored object's size and ETag, or null if there's none: confirming an upload checks both |
 | `DeleteAsync`, `DeleteObjectsAsync` | remove objects (a missing one isn't an error) |
 | `ListObjectsAsync(prefix)` | every object and when it changed, for the orphan sweep |
 | `CreateMultipartUploadAsync`, `SignPartAsync`, `ListPartsAsync`, `CompleteMultipartUploadAsync`, `AbortMultipartUploadAsync` | multipart uploads: a URL per part, then assembly in part order |
@@ -501,7 +513,7 @@ the unguarded core. This mirrors Winche.Database's `IDocumentDatabase` (guarded)
 
 ```csharp
 // IFileStorage — every call is authorized via Winche.Rules
-Task<FileRecord>               SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata, CancellationToken ct);
+Task<FileRecord>               SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata, FilePrecondition? precondition, CancellationToken ct);
 Task<FileRecord?>              GetAsync(string path, CancellationToken ct);
 Task<FileRecord?>              UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct);
 Task<bool>                     DeleteAsync(string path, CancellationToken ct);
@@ -575,7 +587,7 @@ public sealed class Browser(FileStorage files)   // concrete = privileged
 | `uploadId` | `string?` | Multipart upload ID (when active) |
 | `contentHash` | `string?` | Archive object fingerprint (ETag); set on confirm |
 | `metadata` | `JsonObject` | Arbitrary key/value metadata |
-| `version` | `long` | Optimistic-concurrency version counter |
+| `version` | `long` | Goes up with each registration and metadata change; `precondition.version` holds a write to it |
 | `createdAt` | `DateTime` | Creation timestamp |
 | `updatedAt` | `DateTime` | Last-modified timestamp |
 

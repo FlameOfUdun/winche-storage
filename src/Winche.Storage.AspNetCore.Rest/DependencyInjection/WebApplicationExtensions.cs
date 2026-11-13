@@ -28,7 +28,7 @@ public static class WebApplicationExtensions
         group.MapPut("/{path}", async (string path, CreateFileRequest req, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
-            var file = await files.SetAsync(decoded, req.MimeType, req.SizeBytes, req.Metadata, ct);
+            var file = await files.SetAsync(decoded, req.MimeType, req.SizeBytes, req.Metadata, req.Precondition, ct);
             return Results.Json(file);
         });
 
@@ -42,6 +42,7 @@ public static class WebApplicationExtensions
         group.MapPatch("/{path}", async (string path, SetMetadataRequest req, IFileStorage files, CancellationToken ct) =>
         {
             var decoded = DecodePath(path);
+            if (req.Metadata is null) throw new ArgumentException("Send the metadata to change: { \"metadata\": { key: value or null } }.");
             var file = await files.UpdateMetadataAsync(decoded, req.Metadata, ct);
             return file is null ? ExceptionHandler.NotFound(decoded) : Results.Json(file);
         });

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using Winche.Rules;
 using System.Text.Json.Nodes;
 using Winche.Storage.Constants;
 using Winche.Storage.Infrastructure;
@@ -9,6 +10,12 @@ using Winche.Storage.Operations;
 
 namespace Winche.Storage.Services;
 
+/// <summary>
+/// A check run inside a write's transaction, on each file it changes: the operation, the file before (null when new)
+/// and after (null when deleted). Throwing refuses the whole write.
+/// </summary>
+internal delegate Task FileCheck(RuleOperation operation, FileRecord? before, FileRecord? after, CancellationToken ct);
+
 public sealed class FileStorage(
     [FromKeyedServices(WincheStorageKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source,
     IArchive archive,
@@ -16,13 +23,58 @@ public sealed class FileStorage(
     StorageLimits? limits = null
 ) : IFileStorage
 {
-    public async Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default)
+    public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null,
+        FilePrecondition? precondition = null, CancellationToken ct = default) =>
+        SetAsync(path, mimeType, sizeBytes, metadata, precondition, null, ct);
+
+    /// <summary>
+    /// Registers a file, pending its upload: a new one, or a replacement for the file already at the path (its upload
+    /// starts over). <paramref name="check"/> sees the file before and after, inside the transaction, so what it allowed
+    /// is what's written.
+    /// </summary>
+    internal async Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata,
+        FilePrecondition? precondition, FileCheck? check, CancellationToken ct)
     {
+        FilePathParser.Require(path);
         if (sizeBytes < 0 || sizeBytes > limits?.MaxFileSizeBytes)
             throw new FileTooLargeException(path, sizeBytes, limits?.MaxFileSizeBytes);
 
-        return (await WithHooksAsync(HookEventKind.Registered, path,
-            async (conn, tx) => (FileRecord?)await new InsertFileOperation(conn, tx).ExecuteAsync(path, mimeType, sizeBytes, metadata, ct), ct))!;
+        FileRecord? before = null;
+        var record = await WithHooksAsync(HookEventKind.Registered, path, async (conn, tx) =>
+        {
+            before = await new GetFileOperation(conn, tx).ExecuteAsync(path, ct, forUpdate: true);
+            precondition?.Check(path, before);
+            if (check is not null)
+                await check(before is null ? RuleOperation.Create : RuleOperation.Update, before, Proposed(path, mimeType, sizeBytes, metadata, before), ct);
+            var op = new InsertFileOperation(conn, tx);
+            if (before is null)
+                return await op.InsertAsync(path, mimeType, sizeBytes, metadata, ct)
+                    ?? throw (precondition?.Exists == false ? StorageException.AlreadyExists(path) : StorageException.Changed(path));
+            return await op.ReplaceAsync(path, before.Version, mimeType, sizeBytes, metadata, ct) ?? throw StorageException.Changed(path);
+        }, ct);
+
+        // The replaced file's unfinished multipart upload can never complete it now.
+        if (before?.UploadId is { } stale) await BestEffortAsync(() => archive.AbortMultipartUploadAsync(path, stale, ct));
+        return record!;
+    }
+
+    /// <summary>The file a registration would leave, for checks to see before it's written.</summary>
+    private static FileRecord Proposed(string path, string mimeType, long sizeBytes, JsonObject? metadata, FileRecord? before)
+    {
+        var info = FilePathParser.Parse(path);
+        var now = DateTime.UtcNow;
+        return new FileRecord
+        {
+            Id = info.Id!, Directory = info.Directory, Path = path, CreatedAt = before?.CreatedAt ?? now, UpdatedAt = now,
+            MetaData = metadata ?? [], Version = (before?.Version ?? 0) + 1, MimeType = mimeType, SizeBytes = sizeBytes,
+            UploadStatus = UploadStatus.Pending,
+        };
+    }
+
+    private static async Task BestEffortAsync(Func<Task> cleanup)
+    {
+        try { await cleanup(); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { /* the orphan sweep reclaims what's left */ }
     }
 
     /// <summary>
@@ -48,66 +100,82 @@ public sealed class FileStorage(
 
     public async Task<FileRecord?> GetAsync(string path, CancellationToken ct = default)
     {
+        FilePathParser.Require(path);
         await using var conn = await source.OpenConnectionAsync(ct);
         return await new GetFileOperation(conn, null).ExecuteAsync(path, ct);
     }
 
-    public async Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct = default)
+    public Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, CancellationToken ct = default) =>
+        UpdateMetadataAsync(path, patch, null, ct);
+
+    /// <summary>
+    /// Merges <paramref name="patch"/> into the file's metadata (a null value removes the key); <paramref name="check"/>
+    /// sees the file before and with the merged metadata, inside the transaction.
+    /// </summary>
+    internal Task<FileRecord?> UpdateMetadataAsync(string path, JsonObject patch, FileCheck? check, CancellationToken ct)
     {
-        return await WithHooksAsync(HookEventKind.MetadataUpdated, path,
-            (conn, tx) => new UpdateMetadataOperation(conn, tx).ExecuteAsync(path, patch, ct), ct);
+        FilePathParser.Require(path);
+        return WithHooksAsync(HookEventKind.MetadataUpdated, path, async (conn, tx) =>
+        {
+            var before = await new GetFileOperation(conn, tx).ExecuteAsync(path, ct, forUpdate: true);
+            if (before is null)
+            {
+                if (check is not null) await check(RuleOperation.Update, null, null, ct);
+                return null;
+            }
+            var merged = UpdateMetadataOperation.Merge(before.MetaData, patch);
+            if (check is not null)
+                await check(RuleOperation.Update, before, before with { MetaData = merged, Version = before.Version + 1, UpdatedAt = DateTime.UtcNow }, ct);
+            return await new UpdateMetadataOperation(conn, tx).ExecuteAsync(path, before.Version, merged, ct) ?? throw StorageException.Changed(path);
+        }, ct);
     }
 
-    public async Task<bool> DeleteAsync(string path, CancellationToken ct = default)
+    public Task<bool> DeleteAsync(string path, CancellationToken ct = default) => DeleteAsync(path, null, ct);
+
+    /// <summary>
+    /// Deletes the file at <paramref name="path"/> and every file under <c>path/</c>, like a database document with its
+    /// subcollections. <paramref name="check"/> sees each file, inside the transaction: one refusal and nothing is deleted.
+    /// </summary>
+    internal async Task<bool> DeleteAsync(string path, FileCheck? check, CancellationToken ct)
     {
+        FilePathParser.Require(path);
         // The database is the source of truth: commit the row removal FIRST, then clean up the
         // archive best-effort. An archive failure must never roll the delete back — that would leave
         // an undeletable row (object claimed present, every retry re-failing). Any object we miss is
         // a harmless orphan reclaimed by the orphan sweep.
-        IReadOnlyList<FileDeleteCandidate> candidates;
+        IReadOnlyList<FileRecord> files;
         IReadOnlyList<string> deleted;
 
         await using (var conn = await source.OpenConnectionAsync(ct))
         await using (var tx = await conn.BeginTransactionAsync(ct))
         {
-            try
+            var op = new DeleteFileOperation(conn, tx);
+            files = await op.SelectForUpdateAsync(path, ct);
+            if (check is not null)
             {
-                var op = new DeleteFileOperation(conn, tx);
-                candidates = await op.SelectForUpdateAsync(path, ct);
-                deleted = await op.ExecuteAsync(path, ct);
-                foreach (var p in deleted)
-                    await HookOutbox.AddAsync(conn, tx, hookDispatcher.Registrations, HookEventKind.Deleted, p, null, ct);
-                await tx.CommitAsync(ct);
+                if (files.Count == 0) await check(RuleOperation.Delete, null, null, ct);
+                foreach (var file in files) await check(RuleOperation.Delete, file, null, ct);
             }
-            catch
-            {
-                try { await tx.RollbackAsync(ct); } catch { }
-                throw;
-            }
+            if (files.Count == 0) return false;
+            deleted = await op.ExecuteAsync([.. files.Select(f => f.Path)], ct);
+            foreach (var p in deleted)
+                await HookOutbox.AddAsync(conn, tx, hookDispatcher.Registrations, HookEventKind.Deleted, p, null, ct);
+            await tx.CommitAsync(ct);
         }
 
-        if (deleted.Count == 0)
-            return false;
+        if (deleted.Count == 0) return false;
 
         // Logical delete (and its hook deliveries) is durable now, whatever happens to the archive cleanup.
         hookDispatcher.Wake();
 
         // Post-commit archive cleanup — best-effort, never throws back to the caller.
-        try
+        await BestEffortAsync(async () =>
         {
-            foreach (var candidate in candidates)
-            {
-                if (candidate.UploadStatus == UploadStatus.Pending && candidate.UploadId is not null)
-                    await archive.AbortMultipartUploadAsync(candidate.Path, candidate.UploadId, ct);
-            }
-
+            foreach (var file in files)
+                if (file.UploadStatus == UploadStatus.Pending && file.UploadId is not null)
+                    await archive.AbortMultipartUploadAsync(file.Path, file.UploadId, ct);
             await archive.DeleteObjectsAsync(deleted, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // Swallowed by design: the orphan sweep reclaims anything left in the archive.
-        }
-
+        });
         return true;
     }
 
@@ -119,11 +187,11 @@ public sealed class FileStorage(
         if (file.UploadStatus != UploadStatus.Pending)
             throw new InvalidUploadStatusException(path, UploadStatus.Pending, file.UploadStatus);
 
-        if (file.UploadId is not null)
+        if (file.UploadId is { } multipart)
         {
-            await archive.AbortMultipartUploadAsync(path, file.UploadId, ct);
+            await archive.AbortMultipartUploadAsync(path, multipart, ct);
             await using var conn = await source.OpenConnectionAsync(ct);
-            await new SetUploadIdOperation(conn, null).ExecuteAsync(path, null, ct);
+            await new SetUploadIdOperation(conn, null).ClearAsync(path, multipart, ct);
         }
 
         var session = await archive.GenerateUploadUrlAsync(file.Path, file.MimeType, file.SizeBytes, ct);
@@ -134,7 +202,7 @@ public sealed class FileStorage(
     public async Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default)
     {
         var file = await GetAsync(path, ct)
-            ?? throw new FileRecordNotFoundException("File not found");
+            ?? throw new FileRecordNotFoundException(path);
 
         if (file.UploadStatus != UploadStatus.Complete)
             throw new InvalidUploadStatusException(path, UploadStatus.Complete, file.UploadStatus);
@@ -144,38 +212,44 @@ public sealed class FileStorage(
         return session;
     }
 
+    /// <summary>
+    /// Marks the file's upload complete once the archive holds exactly the declared bytes. Only the file that was
+    /// checked is confirmed (still pending, same version): a confirm racing a replacement fails with <c>aborted</c>.
+    /// Confirming a file that's already complete returns it, so a retry is harmless.
+    /// </summary>
     public async Task<FileRecord> ConfirmUploadAsync(string path, CancellationToken ct = default)
     {
-        var file = await GetAsync(path, ct) ?? throw new FileRecordNotFoundException("File not found");
+        var file = await GetAsync(path, ct) ?? throw new FileRecordNotFoundException(path);
+        if (file.UploadStatus == UploadStatus.Complete) return file;
         if (file.UploadStatus != UploadStatus.Pending)
             throw new InvalidUploadStatusException(path, UploadStatus.Pending, file.UploadStatus);
 
         string? contentHash;
-        if (file.UploadId is not null)
+        if (file.UploadId is { } uploadId)
         {
             // Parts are signed without a length, so this is the only point where the declared size (and with
             // it MaxFileSizeBytes) can be held to. A mismatch discards the parts; the client starts over.
-            var uploaded = (await archive.ListPartsAsync(path, file.UploadId, ct)).Sum(p => p.Size ?? 0);
+            var uploaded = (await archive.ListPartsAsync(path, uploadId, ct)).Sum(p => p.Size ?? 0);
             if (uploaded != file.SizeBytes)
             {
-                await archive.AbortMultipartUploadAsync(path, file.UploadId, ct);
+                await archive.AbortMultipartUploadAsync(path, uploadId, ct);
                 await using var abortConn = await source.OpenConnectionAsync(ct);
-                await new SetUploadIdOperation(abortConn, null).ExecuteAsync(path, null, ct);
+                await new SetUploadIdOperation(abortConn, null).ClearAsync(path, uploadId, ct);
                 throw new UploadSizeMismatchException(path, file.SizeBytes, uploaded);
             }
-            contentHash = await archive.CompleteMultipartUploadAsync(path, file.UploadId, ct);
-            await using var conn1 = await source.OpenConnectionAsync(ct);
-            await new SetUploadIdOperation(conn1, null).ExecuteAsync(path, null, ct);
+            contentHash = await archive.CompleteMultipartUploadAsync(path, uploadId, ct);
         }
         else
         {
-            contentHash = await archive.GetObjectETagAsync(path, ct);
-            if (contentHash is null) throw new FileNotUploadedException(path);
+            // A single upload link can't promise the length on every archive, so the stored object is measured.
+            var stored = await archive.HeadAsync(path, ct) ?? throw new FileNotUploadedException(path);
+            if (stored.Size != file.SizeBytes) throw new UploadSizeMismatchException(path, file.SizeBytes, stored.Size);
+            contentHash = stored.ETag;
         }
 
         return await WithHooksAsync(HookEventKind.UploadConfirmed, path,
-            (conn, tx) => new ConfirmUploadOperation(conn, tx).ExecuteAsync(path, contentHash, ct), ct)
-            ?? throw new FileRecordNotFoundException(path);
+            (conn, tx) => new ConfirmUploadOperation(conn, tx).ExecuteAsync(path, file.Version, contentHash, ct), ct)
+            ?? throw StorageException.Changed(path);
     }
 
     /// <summary>
@@ -200,6 +274,7 @@ public sealed class FileStorage(
 
     public async Task<IEnumerable<FileRecord>> ListAsync(string directory, string? mimeType = null, CancellationToken ct = default)
     {
+        if (directory.Length > 0) FilePathParser.Require(directory);
         await using var conn = await source.OpenConnectionAsync(ct);
         return await new ListFilesOperation(conn, null).ExecuteAsync(directory, mimeType, ct);
     }
@@ -294,18 +369,22 @@ public sealed class FileStorage(
         if (file.UploadStatus != UploadStatus.Pending)
             throw new InvalidUploadStatusException(path, UploadStatus.Pending, file.UploadStatus);
 
-        if (file.UploadId is null)
-        {
-            if (partNumber != 1)
-                throw new InvalidOperationException($"No active multipart upload for '{path}'. Start from part 1.");
+        if (file.UploadId is { } existing)
+            return await archive.SignPartAsync(path, existing, partNumber, ct);
+        if (partNumber != 1)
+            throw StorageException.NoUpload(path);
 
-            var uploadId = await archive.CreateMultipartUploadAsync(path, file.MimeType, ct);
-            await using var conn = await source.OpenConnectionAsync(ct);
-            await new SetUploadIdOperation(conn, null).ExecuteAsync(path, uploadId, ct);
-            return await archive.SignPartAsync(path, uploadId, partNumber, ct);
-        }
+        // Two requests may start an upload at once: one records its id, the other gives its own up and uses the winner's.
+        var started = await archive.CreateMultipartUploadAsync(path, file.MimeType, file.SizeBytes, ct);
+        await using (var conn = await source.OpenConnectionAsync(ct))
+            if (await new SetUploadIdOperation(conn, null).StartAsync(path, file.Version, started, ct))
+                return await archive.SignPartAsync(path, started, partNumber, ct);
 
-        return await archive.SignPartAsync(path, file.UploadId, partNumber, ct);
+        await BestEffortAsync(() => archive.AbortMultipartUploadAsync(path, started, ct));
+        var now = await GetAsync(path, ct);
+        if (now is { UploadStatus: UploadStatus.Pending, UploadId: { } winner } && now.Version == file.Version)
+            return await archive.SignPartAsync(path, winner, partNumber, ct);
+        throw StorageException.Changed(path);
     }
 
     public async Task<IEnumerable<FilePart>> ListUploadedPartsAsync(string path, CancellationToken ct = default)

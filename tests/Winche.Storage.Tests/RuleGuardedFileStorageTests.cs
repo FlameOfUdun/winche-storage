@@ -48,6 +48,6 @@ public class RuleGuardedFileStorageTests
         await Assert.ThrowsAsync<AccessDeniedException>(() => guarded.SetAsync("files/large", "text/plain", 101));
 
         Assert.Contains(inner.Calls, c => c.Contains("files/small"));
-        Assert.DoesNotContain(inner.Calls, c => c.Contains("files/large"));
+        Assert.DoesNotContain(inner.Calls, c => c == "Set:files/large");
     }
 }

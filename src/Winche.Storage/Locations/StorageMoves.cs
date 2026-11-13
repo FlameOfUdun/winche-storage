@@ -245,7 +245,7 @@ internal sealed class StorageMoveWorker(StorageMoves moves, ArchiveLocations loc
             total++;
             try
             {
-                if (await target.GetObjectETagAsync(obj.Key, ct) is not null) there++;
+                if (await target.HeadAsync(obj.Key, ct) is not null) there++;
                 else
                 {
                     await using var stream = await from.OpenReadAsync(obj.Key, ct);

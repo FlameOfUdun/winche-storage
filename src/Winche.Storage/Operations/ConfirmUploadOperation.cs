@@ -7,23 +7,25 @@ namespace Winche.Storage.Operations;
 
 internal sealed class ConfirmUploadOperation(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
-    internal async Task<FileRecord?> ExecuteAsync(string path, string? contentHash, CancellationToken ct)
+    /// <summary>
+    /// Marks the file complete, but only the one that was checked: still pending, at <paramref name="version"/>. Null
+    /// when it changed meanwhile (overwritten, deleted, or confirmed by another request).
+    /// </summary>
+    internal async Task<FileRecord?> ExecuteAsync(string path, long version, string? contentHash, CancellationToken ct)
     {
-        var info = FilePathParser.Parse(path);
-
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
             UPDATE {WincheStorageTables.Files}
-            SET upload_status = @status, updated_at = NOW(), content_hash = @hash
-            WHERE path = @path
+            SET upload_status = @complete, upload_id = NULL, content_hash = @hash, updated_at = NOW()
+            WHERE path = @path AND version = @version AND upload_status = @pending
             RETURNING *
             """;
-
-        cmd.Parameters.AddWithValue("status", (short)UploadStatus.Complete);
+        cmd.Parameters.AddWithValue("complete", (short)UploadStatus.Complete);
+        cmd.Parameters.AddWithValue("pending", (short)UploadStatus.Pending);
         cmd.Parameters.AddWithValue("hash", (object?)contentHash ?? DBNull.Value);
         cmd.Parameters.AddWithValue("path", path);
-
+        cmd.Parameters.AddWithValue("version", version);
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         return await NpgsqlFileReader.ReadSingleAsync(reader, ct);
     }

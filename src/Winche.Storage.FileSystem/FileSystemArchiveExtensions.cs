@@ -65,8 +65,21 @@ public static class FileSystemArchiveExtensions
             try { file = archive.FileOf(path); }
             catch (ArgumentException) { return Results.BadRequest(); }
             if (!File.Exists(file)) return Results.NotFound();
-            request.HttpContext.Response.Headers.CacheControl = "private, max-age=300";
-            return Results.File(file, types.TryGetContentType(file, out var type) ? type : "application/octet-stream", enableRangeProcessing: true);
+            // Served from the app's own domain, so nothing a client uploaded may run here: the browser mustn't guess a
+            // type (nosniff), a page is sandboxed (no scripts, no origin), and only media and PDF are shown in place.
+            var headers = request.HttpContext.Response.Headers;
+            headers.CacheControl = "private, max-age=300";
+            headers.XContentTypeOptions = "nosniff";
+            headers.ContentSecurityPolicy = "sandbox; default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'";
+            var type = types.TryGetContentType(file, out var t) ? t : "application/octet-stream";
+            if (!ShownInPlace(type))
+            {
+                type = "application/octet-stream";
+                var disposition = new Microsoft.Net.Http.Headers.ContentDispositionHeaderValue("attachment");
+                disposition.SetHttpFileName(Path.GetFileName(file));
+                headers.ContentDisposition = disposition.ToString();
+            }
+            return Results.File(file, type, enableRangeProcessing: true);
         });
 
         group.MapPut("/p/{uploadId}/{part:int}", async (string uploadId, int part, HttpRequest request, HttpResponse response, CancellationToken ct) =>
@@ -94,6 +107,12 @@ public static class FileSystemArchiveExtensions
 
         return group;
     }
+
+    /// <summary>Types a browser shows without running anything: images (not SVG), audio, video, PDF.</summary>
+    internal static bool ShownInPlace(string type) =>
+        (type.StartsWith("image/", StringComparison.Ordinal) && type != "image/svg+xml")
+        || type.StartsWith("audio/", StringComparison.Ordinal) || type.StartsWith("video/", StringComparison.Ordinal)
+        || type == "application/pdf";
 
     /// <summary>Copies at most <paramref name="max"/> bytes; false (and nothing kept) if the body is longer.</summary>
     private static async Task<bool> CopyAtMostAsync(Stream body, string file, long max, CancellationToken ct)

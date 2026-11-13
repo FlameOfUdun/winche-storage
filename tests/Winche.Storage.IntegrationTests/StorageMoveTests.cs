@@ -36,8 +36,8 @@ internal sealed class MemoryArchive(string name) : IArchive, IArchiveContent
         Task.FromResult(new UploadSession { Url = $"mem://{name}/{path}" });
     public Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default) =>
         Task.FromResult(new DownloadSession { Url = $"mem://{name}/{path}", ExpiresAt = default });
-    public Task<string?> GetObjectETagAsync(string path, CancellationToken ct = default) =>
-        Task.FromResult(Files.TryGetValue(path, out var f) ? $"\"{f.Data.Length}\"" : null);
+    public Task<ArchiveObjectInfo?> HeadAsync(string path, CancellationToken ct = default) =>
+        Task.FromResult(Files.TryGetValue(path, out var f) ? new ArchiveObjectInfo(f.Data.Length, $"\"{f.Data.Length}\"") : (ArchiveObjectInfo?)null);
     public Task DeleteAsync(string path, CancellationToken ct = default) { Files.TryRemove(path, out _); return Task.CompletedTask; }
     public Task DeleteObjectsAsync(IEnumerable<string> paths, CancellationToken ct = default) { foreach (var p in paths) Files.TryRemove(p, out _); return Task.CompletedTask; }
     public async IAsyncEnumerable<ArchivedObject> ListObjectsAsync(string? prefix = null, [EnumeratorCancellation] CancellationToken ct = default)
@@ -46,7 +46,7 @@ internal sealed class MemoryArchive(string name) : IArchive, IArchiveContent
         foreach (var k in Files.Keys.Where(k => prefix is null || k.StartsWith(prefix, StringComparison.Ordinal)).ToList())
             yield return new ArchivedObject(k, DateTime.UtcNow.AddDays(-1));
     }
-    public Task<string> CreateMultipartUploadAsync(string path, string mimeType, CancellationToken ct = default) => Task.FromResult($"{name}-upload");
+    public Task<string> CreateMultipartUploadAsync(string path, string mimeType, long sizeBytes, CancellationToken ct = default) => Task.FromResult($"{name}-upload");
     public Task<UploadSession> SignPartAsync(string path, string uploadId, int partNumber, CancellationToken ct = default) =>
         Task.FromResult(new UploadSession { Url = $"mem://{name}/{path}?part={partNumber}" });
     public Task<string?> CompleteMultipartUploadAsync(string path, string uploadId, CancellationToken ct = default) => Task.FromResult<string?>("etag");

@@ -23,7 +23,7 @@ internal sealed class RecordingFileStorage : IFileStorage
         return Task.FromResult(DeleteReturns);
     }
 
-    public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, CancellationToken ct = default)
+    public Task<FileRecord> SetAsync(string path, string mimeType, long sizeBytes, JsonObject? metadata = null, FilePrecondition? precondition = null, CancellationToken ct = default)
     {
         Calls.Add($"Set:{path}");
         return Task.FromResult<FileRecord>(null!);

@@ -62,7 +62,7 @@ public class UploadLifecycleTests(PostgresFixture fixture) : IClassFixture<Postg
     [Fact]
     public async Task ConfirmUploadAsync_single_put_marks_complete_and_persists_hash()
     {
-        var archive = new FakeArchive { SingleObjectETag = "abc123" };
+        var archive = new FakeArchive { SingleObjectETag = "abc123", SingleObjectSize = 10 };
         var storage = NewStorage(archive);
         await storage.SetAsync("docs/a.txt", "text/plain", 10);
 
@@ -83,13 +83,15 @@ public class UploadLifecycleTests(PostgresFixture fixture) : IClassFixture<Postg
     }
 
     [Fact]
-    public async Task ConfirmUploadAsync_rejects_a_non_pending_file()
+    public async Task A_second_confirm_returns_the_file_unchanged()
     {
-        var storage = NewStorage(new FakeArchive());
+        var storage = NewStorage(new FakeArchive { SingleObjectSize = 10 });
         await storage.SetAsync("docs/a.txt", "text/plain", 10);
-        await storage.ConfirmUploadAsync("docs/a.txt"); // now Complete
+        var first = await storage.ConfirmUploadAsync("docs/a.txt"); // now Complete
 
-        await Assert.ThrowsAsync<InvalidUploadStatusException>(() => storage.ConfirmUploadAsync("docs/a.txt"));
+        var again = await storage.ConfirmUploadAsync("docs/a.txt");   // a retried request
+        Assert.Equal(first.Version, again.Version);
+        Assert.Equal(UploadStatus.Complete, again.UploadStatus);
     }
 
     [Fact]

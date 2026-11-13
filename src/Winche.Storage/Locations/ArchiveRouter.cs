@@ -34,16 +34,16 @@ internal sealed class ArchiveRouter(SettingsArea<StorageLocationSettings> area, 
     public async Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default)
     {
         var active = await ActiveAsync(ct);
-        if (Switched && await OtherAsync(ct) is { } old && await active.GetObjectETagAsync(path, ct) is null && await old.GetObjectETagAsync(path, ct) is not null)
+        if (Switched && await OtherAsync(ct) is { } old && await active.HeadAsync(path, ct) is null && await old.HeadAsync(path, ct) is not null)
             return await old.GenerateDownloadUrlAsync(path, ct);
         return await active.GenerateDownloadUrlAsync(path, ct);
     }
 
-    public async Task<string?> GetObjectETagAsync(string path, CancellationToken ct = default)
+    public async Task<ArchiveObjectInfo?> HeadAsync(string path, CancellationToken ct = default)
     {
-        var etag = await (await ActiveAsync(ct)).GetObjectETagAsync(path, ct);
-        if (etag is null && Switched && await OtherAsync(ct) is { } old) etag = await old.GetObjectETagAsync(path, ct);   // uploaded through a URL from before the switch
-        return etag;
+        var info = await (await ActiveAsync(ct)).HeadAsync(path, ct);
+        if (info is null && Switched && await OtherAsync(ct) is { } old) info = await old.HeadAsync(path, ct);   // uploaded through a URL from before the switch
+        return info;
     }
 
     public async Task DeleteAsync(string path, CancellationToken ct = default)
@@ -64,10 +64,10 @@ internal sealed class ArchiveRouter(SettingsArea<StorageLocationSettings> area, 
         await foreach (var o in (await ActiveAsync(ct)).ListObjectsAsync(prefix, ct)) yield return o;
     }
 
-    public async Task<string> CreateMultipartUploadAsync(string path, string mimeType, CancellationToken ct = default)
+    public async Task<string> CreateMultipartUploadAsync(string path, string mimeType, long sizeBytes, CancellationToken ct = default)
     {
         var active = await ActiveAsync(ct);
-        var id = await active.CreateMultipartUploadAsync(path, mimeType, ct);
+        var id = await active.CreateMultipartUploadAsync(path, mimeType, sizeBytes, ct);
         _uploads[id] = active;
         return id;
     }

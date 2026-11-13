@@ -16,6 +16,7 @@ internal class ExceptionHandler(ILogger<ExceptionHandler> logger) : WincheErrorF
     /// <summary>The error for a failure storage expects, or null for an unexpected one.</summary>
     internal static WincheError? Known(Exception ex) => ex switch
     {
+        StorageException se => se.Error,
         AccessDeniedException => new WincheError(WincheErrorCode.PermissionDenied, ex.Message),
         FileRecordNotFoundException => new WincheError(WincheErrorCode.NotFound, ex.Message),
         FileTooLargeException => new WincheError(WincheErrorCode.InvalidArgument, ex.Message, "too-large"),

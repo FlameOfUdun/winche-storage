@@ -13,16 +13,17 @@ public class MetadataAndListTests(PostgresFixture fixture) : IClassFixture<Postg
     public Task DisposeAsync() => Task.CompletedTask;
 
     [Fact]
-    public async Task UpdateMetadataAsync_replaces_the_whole_document()
+    public async Task UpdateMetadataAsync_merges_and_a_null_removes_a_key()
     {
         var storage = NewStorage();
-        await storage.SetAsync("docs/a.txt", "text/plain", 1, new JsonObject { ["a"] = 1 });
+        await storage.SetAsync("docs/a.txt", "text/plain", 1, new JsonObject { ["a"] = 1, ["c"] = 3 });
 
-        var updated = await storage.UpdateMetadataAsync("docs/a.txt", new JsonObject { ["b"] = 2 });
+        var updated = await storage.UpdateMetadataAsync("docs/a.txt", new JsonObject { ["b"] = 2, ["c"] = null });
 
         Assert.NotNull(updated);
-        Assert.Equal(2, (int)updated!.MetaData["b"]!);
-        Assert.Null(updated.MetaData["a"]); // replaced, not merged
+        Assert.Equal(1, (int)updated!.MetaData["a"]!);   // kept
+        Assert.Equal(2, (int)updated.MetaData["b"]!);    // added
+        Assert.False(updated.MetaData.ContainsKey("c"));  // removed
     }
 
     [Fact]
