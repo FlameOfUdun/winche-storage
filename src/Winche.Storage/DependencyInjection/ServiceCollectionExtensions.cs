@@ -105,6 +105,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IFileStorage>(sp =>
             sp.GetRequiredService<RuleGuardedFileStorage>());
 
+        // file: for the database's expand (a document field holding a file path comes back with the file's record).
+        services.AddSingleton<IWincheReferenceResolver>(sp => new FileReferenceResolver(
+            sp.GetRequiredService<FileStorage>(), sp.GetRequiredKeyedService<RuleEngine>(WincheStorageKeys.RULE_ENGINE_KEY)));
+
         return services;
     }
 }

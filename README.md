@@ -502,6 +502,13 @@ public class AuditHook : FileStoreHook
 
 Register: `opts.UseHooks(h => h.Add<AuditHook>("userFiles/{userId}/{file=**}"))`.
 
+## Files in database documents
+
+With Winche.Database in the same app, a document field holding a file's path can be expanded:
+`expand: ["file:scan"]` returns the file's record (type, size, metadata, upload status; no download link: ask storage
+for one) under `resolved`, if the storage rules let the caller `get` the file, and live subscriptions follow changes to
+it. Nothing to set up: `AddWincheStorage` registers the `file` resolver (Winche.Core's `IWincheReferenceResolver`).
+
 ## Before hooks
 
 A `FileBeforeHook` runs **before** a file write is saved, inside its transaction, after the access rules allowed it, for
