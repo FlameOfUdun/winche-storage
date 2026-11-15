@@ -33,12 +33,44 @@ public sealed class WincheStorageOptions
 
     /// <summary>
     /// Largest file a client may register, in bytes; null (the default) means no limit beyond the
-    /// archive's own. A larger declared size is refused when the record is created (413 over REST), and
+    /// archive's own. A larger declared size is refused when the record is created (invalid-argument, reason too-large, over REST), and
     /// a multipart upload whose parts don't add up to the declared size is refused at confirmation, so
     /// the limit holds for the bytes actually stored. For per-path limits, write a create rule on
     /// <c>request.resource.sizeBytes</c>.
     /// </summary>
     public long? MaxFileSizeBytes { get; set; }
+
+    /// <summary>What's logged about requests (<see cref="LogRequests"/>), or null when off.</summary>
+    public Logging.RequestLogOptions? RequestLog { get; internal set; }
+
+    /// <summary>
+    /// Lets the console change the file size limit, request logging and the orphan sweep without a deploy (9.1.0);
+    /// what's set here becomes the starting values. Needs <c>AddWincheConfig(…)</c> to save changes.
+    /// </summary>
+    public WincheStorageOptions UseSettings()
+    {
+        SettingsEnabled = true;
+        return this;
+    }
+
+    /// <summary>Whether the console may change these settings (<see cref="UseSettings"/>).</summary>
+    public bool SettingsEnabled { get; private set; }
+
+    /// <summary>Whether <see cref="UseOrphanSweep"/> was called in code.</summary>
+    internal bool OrphanSweepInCode { get; private set; }
+
+    /// <summary>
+    /// Log app requests that go through the access rules (9.1.0), as structured entries in the category
+    /// <c>Winche.Storage.Requests</c> (<c>Operation</c>, <c>Path</c>, <c>Principal</c>, <c>Outcome</c>, <c>LatencyMs</c>):
+    /// denied and slow ones always (Warning), a sample of the rest (Information).
+    /// </summary>
+    public WincheStorageOptions LogRequests(Action<Logging.RequestLogOptions>? configure = null)
+    {
+        var o = new Logging.RequestLogOptions();
+        configure?.Invoke(o);
+        RequestLog = o;
+        return this;
+    }
 
     /// <summary>
     /// Rulesets registered via <see cref="UseRules(RuleSet)"/>. Collected here (not in the DI
@@ -79,16 +111,16 @@ public sealed class WincheStorageOptions
     }
 
     /// <summary>
-    /// Registers file lifecycle hooks via a fluent builder, binding each hook to a Firestore-style
-    /// path pattern at registration time. Multiple calls accumulate — each binding is registered as a
-    /// singleton so that <c>GetServices&lt;HookRegistration&gt;()</c> returns them all at startup.
-    /// </summary>
-    /// <summary>
     /// How file hooks are delivered (retries, lease, dead letters). File changes reach their hooks durably and at
     /// least once; see <see cref="Models.HookDeliveryOptions"/>.
     /// </summary>
     public Models.HookDeliveryOptions HookDelivery { get; set; } = new();
 
+    /// <summary>
+    /// Registers file lifecycle hooks via a fluent builder, binding each hook to a Firestore-style
+    /// path pattern at registration time. Multiple calls accumulate — each binding is registered as a
+    /// singleton so that <c>GetServices&lt;HookRegistration&gt;()</c> returns them all at startup.
+    /// </summary>
     public WincheStorageOptions UseHooks(Action<HookBuilder> configure)
     {
         var builder = new HookBuilder(Services);
@@ -105,7 +137,7 @@ public sealed class WincheStorageOptions
     public WincheStorageOptions UseOrphanSweep(Action<OrphanSweepOptions>? configure = null)
     {
         Services.Configure(configure ?? (_ => { }));
-        Services.AddHostedService<Services.OrphanSweepService>();
+        OrphanSweepInCode = true;
         return this;
     }
 }
@@ -117,12 +149,34 @@ public sealed class WincheStorageOptions
 /// </summary>
 public sealed class HookBuilder(IServiceCollection services)
 {
+    /// <summary>The app's services, for extensions that add hooks with their own needs (e.g. Winche.Webhooks).</summary>
+    public IServiceCollection Services => services;
+
     /// <summary>
     /// Registers a hook <typeparamref name="THook"/> (constructed via DI, so constructor injection
     /// works) bound to <paramref name="path"/>. The same hook type may be bound to multiple paths.
     /// </summary>
+    /// <summary>
+    /// Registers a before hook <typeparamref name="THook"/> (built by DI) for files at <paramref name="path"/>: it runs in
+    /// every matching write's transaction and may refuse it or change its metadata (see <see cref="Abstraction.FileBeforeHook"/>).
+    /// </summary>
+    public HookBuilder Before<THook>(string path) where THook : Abstraction.FileBeforeHook
+    {
+        services.TryAddSingleton<THook>();
+        services.AddSingleton(sp => new Abstraction.FileBeforeHookRegistration(path, sp.GetRequiredService<THook>()));
+        return this;
+    }
+
+    /// <summary>Registers a before hook instance for files at <paramref name="path"/>.</summary>
+    public HookBuilder Before(string path, Abstraction.FileBeforeHook hook)
+    {
+        services.AddSingleton(new Abstraction.FileBeforeHookRegistration(path, hook));
+        return this;
+    }
+
     public HookBuilder Add<THook>(string path) where THook : Abstraction.FileStoreHook
     {
+        Winche.PathPattern.Parse(path);   // a bad pattern fails here, at startup, not in every file change
         services.TryAddSingleton<THook>();
         services.AddSingleton(sp => new Abstraction.HookRegistration(path, sp.GetRequiredService<THook>()));
         return this;
@@ -131,6 +185,7 @@ public sealed class HookBuilder(IServiceCollection services)
     /// <summary>Registers a pre-constructed <paramref name="hook"/> instance bound to <paramref name="path"/>.</summary>
     public HookBuilder Add(string path, Abstraction.FileStoreHook hook)
     {
+        Winche.PathPattern.Parse(path);
         services.AddSingleton(new Abstraction.HookRegistration(path, hook));
         return this;
     }

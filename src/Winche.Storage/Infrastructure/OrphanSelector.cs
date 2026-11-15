@@ -8,7 +8,7 @@ namespace Winche.Storage.Infrastructure;
 /// grace cutoff. The grace window protects in-flight uploads: an object freshly PUT to the archive
 /// whose database row has not been committed yet is newer than the cutoff and is therefore kept.
 /// </summary>
-public static class OrphanSelector
+internal static class OrphanSelector
 {
     /// <summary>
     /// Returns the keys of <paramref name="objects"/> that are orphans relative to

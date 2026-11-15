@@ -1,44 +1,33 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 using Winche.Storage.Authorization;
 using Winche.Storage.Models;
 
 namespace Winche.Storage.AspNetCore.Rest.EndpointFilters;
 
-internal class ExceptionHandler : IEndpointFilter
+/// <summary>
+/// Answers failures with the shared Winche error: <c>{ "error": { code, message, reason? } }</c> and its HTTP status.
+/// An unexpected one is logged under a short id the caller gets in <c>details.errorId</c>, and nothing else about it.
+/// </summary>
+internal class ExceptionHandler(ILogger<ExceptionHandler> logger) : WincheErrorFilter(logger)
 {
-    public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
+    protected override WincheError? Map(Exception exception) => Known(exception);
+
+    /// <summary>The error for a failure storage expects, or null for an unexpected one.</summary>
+    internal static WincheError? Known(Exception ex) => ex switch
     {
-        try
-        {
-            return await next(context);
-        }
-        catch (InvalidUploadStatusException ex)
-        {
-            return Results.Json(new { error = ex.Message }, statusCode: 400, contentType: "application/json");
-        }
-        catch (FileNotUploadedException ex)
-        {
-            return Results.Json(new { error = ex.Message }, statusCode: 400, contentType: "application/json");
-        }
-        catch (FileTooLargeException ex)
-        {
-            return Results.Json(new { error = ex.Message }, statusCode: 413, contentType: "application/json");
-        }
-        catch (UploadSizeMismatchException ex)
-        {
-            return Results.Json(new { error = ex.Message }, statusCode: 400, contentType: "application/json");
-        }
-        catch (AccessDeniedException ex)
-        {
-            return Results.Json(new { error = ex.Message }, statusCode: 403, contentType: "application/json");
-        }
-        catch (FileRecordNotFoundException ex)
-        {
-            return Results.Json(new { error = ex.Message }, statusCode: 404, contentType: "application/json");
-        }
-        catch (Exception ex)
-        {
-            return Results.Json(new { error = "Unexpected error", detail = ex.Message }, statusCode: 500, contentType: "application/json");
-        }
-    }
+        StorageException se => se.Error,
+        WincheDeniedException denied => denied.Error,   // the app's own code (a before hook) refused it
+        AccessDeniedException => new WincheError(WincheErrorCode.PermissionDenied, ex.Message),
+        FileRecordNotFoundException => new WincheError(WincheErrorCode.NotFound, ex.Message),
+        FileTooLargeException => new WincheError(WincheErrorCode.InvalidArgument, ex.Message, "too-large"),
+        UploadSizeMismatchException => new WincheError(WincheErrorCode.InvalidArgument, ex.Message, "size-mismatch"),
+        InvalidUploadStatusException => new WincheError(WincheErrorCode.FailedPrecondition, ex.Message, "upload-status"),
+        FileNotUploadedException => new WincheError(WincheErrorCode.FailedPrecondition, ex.Message, "not-uploaded"),
+        ArgumentException or FormatException => new WincheError(WincheErrorCode.InvalidArgument, ex.Message),
+        _ => null,
+    };
+
+    /// <summary>A 404 in the shared shape, for a file that isn't there.</summary>
+    internal static IResult NotFound(string path) => new WincheError(WincheErrorCode.NotFound, $"There's no file at {path}.").ToResult();
 }

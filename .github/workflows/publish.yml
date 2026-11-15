@@ -33,6 +33,7 @@ jobs:
           dotnet pack src/Winche.Storage.AspNetCore/Winche.Storage.AspNetCore.csproj -c Release --no-build -o ./packages
           dotnet pack src/Winche.Storage.AspNetCore.Rest/Winche.Storage.AspNetCore.Rest.csproj -c Release --no-build -o ./packages
           dotnet pack src/Winche.Storage.S3/Winche.Storage.S3.csproj -c Release --no-build -o ./packages
+          dotnet pack src/Winche.Storage.FileSystem/Winche.Storage.FileSystem.csproj -c Release --no-build -o ./packages
 
       # Exchange the GitHub OIDC token for a short-lived NuGet.org API key.
       - name: NuGet login (trusted publishing)

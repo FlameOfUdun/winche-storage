@@ -5,7 +5,7 @@ using Winche.Storage.Constants;
 namespace Winche.Storage.Operations;
 
 /// <summary>
-/// Returns the subset of the supplied paths that currently have a row in <c>winche_files</c>.
+/// Returns the subset of the supplied archive keys that a file in <c>winche_files</c> uses (its bytes or its pending upload).
 /// Used by the orphan sweep to decide which archive keys are unreferenced.
 /// </summary>
 internal sealed class SelectExistingPathsOperation(NpgsqlConnection conn, NpgsqlTransaction? tx)
@@ -18,9 +18,9 @@ internal sealed class SelectExistingPathsOperation(NpgsqlConnection conn, Npgsql
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
-            SELECT path
-            FROM {WincheStorageTables.Files}
-            WHERE path = ANY(@paths)
+            SELECT object_key FROM {WincheStorageTables.Files} WHERE object_key = ANY(@paths)
+            UNION
+            SELECT upload_key FROM {WincheStorageTables.Files} WHERE upload_key = ANY(@paths)
             """;
         cmd.Parameters.Add(new NpgsqlParameter("paths", NpgsqlDbType.Array | NpgsqlDbType.Text)
         {

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackageId>Winche.Storage.FileSystem</PackageId>
+    <Description>A local-disk (or mounted volume) archive backend for Winche.Storage: files in a folder, uploaded and downloaded through HMAC-signed, expiring URLs served by your own app, with multipart uploads.</Description>
+    <PackageTags>storage;files;filesystem;disk;archive</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Winche.Storage\Winche.Storage.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Winche.Storage.Tests" />
+  </ItemGroup>
+
+</Project>

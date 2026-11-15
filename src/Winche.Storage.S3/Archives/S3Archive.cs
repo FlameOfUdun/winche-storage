@@ -11,15 +11,77 @@ namespace Winche.Storage.S3.Archives;
 public sealed class S3Archive(
     IAmazonS3 s3,
     IOptions<S3ArchiveOptions> options
-) : IArchive
+) : IArchive, Winche.Storage.Locations.IArchiveContent
 {
+    // ── IArchiveContent (moving files between locations) ──────────────────────────
+
+    public async Task<Stream?> OpenReadAsync(string path, CancellationToken ct = default)
+    {
+        try
+        {
+            var response = await s3.GetObjectAsync(new GetObjectRequest { BucketName = this.options.BucketName, Key = path }, ct);
+            return new OwnedStream(response.ResponseStream, response);
+        }
+        catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound) { return null; }
+    }
+
+    public async Task WriteAsync(string path, Stream content, string? contentType, CancellationToken ct = default)
+    {
+        // S3 needs the length up front: buffer streams that can't tell it to a temporary file (large ones go in parts).
+        string? temp = null;
+        try
+        {
+            if (!content.CanSeek)
+            {
+                temp = Path.Combine(Path.GetTempPath(), $"winche-move-{Guid.NewGuid():N}");
+                await using (var file = File.Create(temp)) await content.CopyToAsync(file, ct);
+            }
+            using var transfer = new Amazon.S3.Transfer.TransferUtility(s3);
+            var request = new Amazon.S3.Transfer.TransferUtilityUploadRequest
+            {
+                BucketName = this.options.BucketName, Key = path, ContentType = contentType ?? "application/octet-stream",
+            };
+            if (temp is not null) request.FilePath = temp; else request.InputStream = content;
+            await transfer.UploadAsync(request, ct);
+        }
+        finally
+        {
+            if (temp is not null && File.Exists(temp)) File.Delete(temp);
+        }
+    }
+
+    /// <summary>The response body, disposing the response with it.</summary>
+    private sealed class OwnedStream(Stream inner, IDisposable owner) : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default) => inner.ReadAsync(buffer, ct);
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) { inner.Dispose(); owner.Dispose(); }
+            base.Dispose(disposing);
+        }
+    }
+
     private readonly S3ArchiveOptions options = options.Value;
+
+    /// <summary>Signed links follow the service's scheme: an S3-compatible service on plain http (MinIO, LocalStack) gets http links.</summary>
+    private Protocol LinkProtocol => this.options.ServiceUrl is { } u && u.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? Protocol.HTTP : Protocol.HTTPS;
 
     public Task<UploadSession> GenerateUploadUrlAsync(string path, string mimeType, long sizeBytes, CancellationToken ct = default)
     {
         var expiresAt = DateTime.UtcNow.Add(options.PresignedUrlExpiry);
         var request = new GetPreSignedUrlRequest
         {
+            Protocol = LinkProtocol,
             BucketName = options.BucketName,
             Key = path,
             Verb = HttpVerb.PUT,
@@ -35,16 +97,24 @@ public sealed class S3Archive(
         });
     }
 
-    public Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default)
+    public Task<DownloadSession> GenerateDownloadUrlAsync(string path, DownloadHeaders? headers = null, CancellationToken ct = default)
     {
         var expiresAt = DateTime.UtcNow.Add(options.PresignedUrlExpiry);
         var request = new GetPreSignedUrlRequest
         {
+            Protocol = LinkProtocol,
             BucketName = options.BucketName,
             Key = path,
             Verb = HttpVerb.GET,
             Expires = expiresAt,
         };
+        if (headers is not null)
+        {
+            // Signed into the link, so S3 answers with the file's recorded type and headers, not what was uploaded.
+            request.ResponseHeaderOverrides.ContentType = headers.ContentType;
+            if (headers.ContentDisposition is { } disposition) request.ResponseHeaderOverrides.ContentDisposition = disposition;
+            if (headers.CacheControl is { } cache) request.ResponseHeaderOverrides.CacheControl = cache;
+        }
 
         return Task.FromResult(new DownloadSession
         {
@@ -55,7 +125,7 @@ public sealed class S3Archive(
 
     private static string? NormalizeETag(string? etag) => etag?.Trim('"');
 
-    public async Task<string?> GetObjectETagAsync(string path, CancellationToken ct = default)
+    public async Task<ArchiveObjectInfo?> HeadAsync(string path, CancellationToken ct = default)
     {
         try
         {
@@ -64,7 +134,7 @@ public sealed class S3Archive(
                 BucketName = options.BucketName,
                 Key = path,
             }, ct);
-            return NormalizeETag(meta.ETag);
+            return new ArchiveObjectInfo(meta.ContentLength, NormalizeETag(meta.ETag));
         }
         catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
@@ -141,7 +211,7 @@ public sealed class S3Archive(
         while (continuationToken is not null);
     }
 
-    public async Task<string> CreateMultipartUploadAsync(string path, string mimeType, CancellationToken ct = default)
+    public async Task<string> CreateMultipartUploadAsync(string path, string mimeType, long sizeBytes, CancellationToken ct = default)
     {
         var response = await s3.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest
         {
@@ -157,6 +227,7 @@ public sealed class S3Archive(
         var expiresAt = DateTime.UtcNow.Add(options.PresignedUrlExpiry);
         var request = new GetPreSignedUrlRequest
         {
+            Protocol = LinkProtocol,
             BucketName = options.BucketName,
             Key = path,
             Verb = HttpVerb.PUT,
@@ -172,7 +243,10 @@ public sealed class S3Archive(
         });
     }
 
-    public async Task<string?> CompleteMultipartUploadAsync(string path, string uploadId, CancellationToken ct = default)
+    public Task<string?> CompleteMultipartUploadAsync(string path, string uploadId, CancellationToken ct = default) =>
+        Mapped(path, () => CompleteAsync(path, uploadId, ct));
+
+    private async Task<string?> CompleteAsync(string path, string uploadId, CancellationToken ct)
     {
         var parts = new List<PartDetail>();
         string? marker = null;
@@ -203,7 +277,10 @@ public sealed class S3Archive(
         return NormalizeETag(resp.ETag);
     }
 
-    public async Task<IEnumerable<FilePart>> ListPartsAsync(string path, string uploadId, CancellationToken ct = default)
+    public Task<IEnumerable<FilePart>> ListPartsAsync(string path, string uploadId, CancellationToken ct = default) =>
+        Mapped(path, () => PartsAsync(path, uploadId, ct));
+
+    private async Task<IEnumerable<FilePart>> PartsAsync(string path, string uploadId, CancellationToken ct)
     {
         var parts = new List<PartDetail>();
         string? marker = null;
@@ -242,6 +319,18 @@ public sealed class S3Archive(
         catch (AmazonS3Exception ex) when (string.Equals(ex.ErrorCode, "NoSuchUpload", StringComparison.Ordinal))
         {
             // Already aborted or completed — idempotent.
+        }
+    }
+
+    /// <summary>S3's answers about a multipart upload that can't go on, as the storage errors a client can act on.</summary>
+    private static async Task<T> Mapped<T>(string path, Func<Task<T>> call)
+    {
+        try { return await call(); }
+        catch (AmazonS3Exception ex) when (ex.ErrorCode == "NoSuchUpload") { throw StorageException.UploadGone(path); }
+        catch (AmazonS3Exception ex) when (ex.ErrorCode is "InvalidPart" or "InvalidPartOrder" or "EntityTooSmall")
+        {
+            throw new StorageException(new WincheError(WincheErrorCode.FailedPrecondition,
+                $"The parts uploaded for {path} don't make a file ({ex.ErrorCode}); start the upload again.", "upload-invalid"));
         }
     }
 }

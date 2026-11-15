@@ -16,10 +16,10 @@ public class ContentHashSurfaceTests
     }
 
     [Fact]
-    public void IArchive_exposes_GetObjectETagAsync_returning_Task_of_string()
+    public void IArchive_exposes_HeadAsync_with_size_and_etag()
     {
-        var m = typeof(IArchive).GetMethod("GetObjectETagAsync");
+        var m = typeof(IArchive).GetMethod("HeadAsync");
         Assert.NotNull(m);
-        Assert.Equal(typeof(Task<string>), m!.ReturnType); // string? erases to string at runtime
+        Assert.Equal(typeof(Task<ArchiveObjectInfo?>), m!.ReturnType);
     }
 }

@@ -49,9 +49,11 @@ public class RegistrationTests
             o.UseOrphanSweep();
         });
 
-        var registered = services.Any(d =>
-            d.ServiceType == typeof(IHostedService) &&
-            d.ImplementationType?.Name == "OrphanSweepService");
+        services.AddLogging();
+        using var sp = services.BuildServiceProvider();
+        // Registered as storage's background work: started once storage is set up.
+        var registered = sp.GetServices<IHostedService>().OfType<Winche.Core.WhenProductReadyService>()
+            .Any(w => w.Inner.GetType().Name == "OrphanSweepService");
 
         Assert.True(registered);
     }
@@ -81,9 +83,11 @@ public class RegistrationTests
             o.ConnectionString = "Host=localhost;Port=5432;Database=test;Username=test;Password=test";
         });
 
-        var registered = services.Any(d =>
-            d.ServiceType == typeof(IHostedService) &&
-            d.ImplementationType?.Name == "OrphanSweepService");
+        services.AddLogging();
+        using var sp = services.BuildServiceProvider();
+        // Registered as storage's background work: started once storage is set up.
+        var registered = sp.GetServices<IHostedService>().OfType<Winche.Core.WhenProductReadyService>()
+            .Any(w => w.Inner.GetType().Name == "OrphanSweepService");
 
         Assert.False(registered);
     }

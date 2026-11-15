@@ -1,11 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using Winche.Core;
 using Winche.Storage.Constants;
 using Winche.Storage.Interfaces;
 
 namespace Winche.Storage.Services;
 
-public sealed class SchemaManager(
+internal sealed class SchemaManager(
     [FromKeyedServices(WincheStorageKeys.DATA_SOURCE_KEY)] NpgsqlDataSource source
 ) : ISchemaManager
 {
@@ -62,9 +63,24 @@ public sealed class SchemaManager(
                 ON {{WincheStorageTables.HookDeliveries}}(hook, path, id) WHERE dead_at IS NULL;
             """;
 
-        await using var conn = await source.OpenConnectionAsync(ct);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = sql;
-        await cmd.ExecuteNonQueryAsync(ct);
+        // Numbered steps under one lock (Winche.Core): new tables or columns go in a new step.
+        // Step 2: deletes match a file and everything under it (path LIKE 'a/b/%'), which the primary key can't serve
+        // unless the database's collation is C.
+        const string prefixIndex = $"CREATE INDEX IF NOT EXISTS idx_{WincheStorageTables.Files}_path_prefix ON {WincheStorageTables.Files} (path text_pattern_ops)";
+        // Step 3: each upload has an archive key of its own (ObjectKeys), so bytes are never overwritten in place.
+        // Files from before keep theirs, which was their path.
+        const string objectKeys = $"""
+            ALTER TABLE {WincheStorageTables.Files} ADD COLUMN IF NOT EXISTS object_key text, ADD COLUMN IF NOT EXISTS upload_key text;
+            UPDATE {WincheStorageTables.Files} SET object_key = path WHERE upload_status = 1 AND object_key IS NULL;
+            UPDATE {WincheStorageTables.Files} SET upload_key = path WHERE upload_status <> 1 AND upload_key IS NULL;
+            CREATE INDEX IF NOT EXISTS idx_{WincheStorageTables.Files}_object_key ON {WincheStorageTables.Files} (object_key);
+            CREATE INDEX IF NOT EXISTS idx_{WincheStorageTables.Files}_upload_key ON {WincheStorageTables.Files} (upload_key);
+            """;
+        // Step 4: download headers a file can set (Firebase's contentDisposition and cacheControl).
+        const string headers = $"ALTER TABLE {WincheStorageTables.Files} ADD COLUMN IF NOT EXISTS content_disposition text, ADD COLUMN IF NOT EXISTS cache_control text";
+        // Step 5: hooks consume storage's change feed (Winche.Core); the per-hook outbox is gone with what it held.
+        const string feed = $"DROP TABLE IF EXISTS {WincheStorageTables.HookDeliveries};";
+        await WincheSchema.EnsureAsync(source, "storage", [sql, prefixIndex, objectKeys, headers, feed + Winche.Core.Feeds.WincheEventFeed.TableSql(WincheStorageTables.Feed)], ct);
+        await Winche.Core.Feeds.WincheFeedTables.EnsureAsync(source, ct);
     }
 }
