@@ -117,7 +117,7 @@ public sealed class WincheStorageOptions
     public Models.HookDeliveryOptions HookDelivery { get; set; } = new();
 
     /// <summary>
-    /// Registers file lifecycle hooks via a fluent builder, binding each hook to a Firestore-style
+    /// Registers file lifecycle hooks via a fluent builder, binding each hook to a
     /// path pattern at registration time. Multiple calls accumulate — each binding is registered as a
     /// singleton so that <c>GetServices&lt;HookRegistration&gt;()</c> returns them all at startup.
     /// </summary>

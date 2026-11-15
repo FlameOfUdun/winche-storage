@@ -8,7 +8,7 @@ namespace Winche.Storage.Authorization;
 
 /// <summary>
 /// Converts a <see cref="FileRecord"/> to the rules engine's <c>resource</c> map.
-/// System fields (<c>id</c>, <c>path</c>, <c>directory</c>, <c>mimeType</c> (also <c>contentType</c>), <c>sizeBytes</c> (also <c>size</c>, as Firebase calls them),
+/// System fields (<c>id</c>, <c>path</c>, <c>directory</c>, <c>mimeType</c> (also <c>contentType</c>), <c>sizeBytes</c> (also <c>size</c>),
 /// <c>uploadStatus</c>, <c>version</c>, <c>createdAt</c>, <c>updatedAt</c>) are exposed at the
 /// top level; the <c>metadata</c> JSON object is nested under <c>"metadata"</c>.
 /// </summary>
@@ -21,9 +21,9 @@ internal static class FileToResource
             ["path"] = new StringValue(file.Path),
             ["directory"] = new StringValue(file.Directory),
             ["mimeType"] = new StringValue(file.MimeType),
-            ["contentType"] = new StringValue(file.MimeType),   // Firebase\'s name
+            ["contentType"] = new StringValue(file.MimeType),   // another name for mimeType
             ["sizeBytes"] = new IntegerValue(file.SizeBytes),
-            ["size"] = new IntegerValue(file.SizeBytes),   // Firebase\'s name
+            ["size"] = new IntegerValue(file.SizeBytes),   // another name for sizeBytes
             ["uploadStatus"] = new StringValue(file.UploadStatus.ToString().ToLowerInvariant()),
             ["version"] = new IntegerValue(file.Version),
             ["createdAt"] = new TimestampValue(new DateTimeOffset(file.CreatedAt, TimeSpan.Zero)),

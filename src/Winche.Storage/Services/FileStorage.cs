@@ -381,7 +381,7 @@ public sealed class FileStorage : IFileStorage
         return file is { UploadStatus: UploadStatus.Complete } ? await bytes.OpenReadAsync(file.ObjectKey ?? file.Path, ct) : null;
     }
 
-    /// <summary>The most a list page holds, and its default size (as Firebase).</summary>
+    /// <summary>The most a list page holds, and its default size.</summary>
     public const int MaxListResults = 1000;
 
     public async Task<FileListResult> ListAsync(string directory, FileListOptions? options = null, CancellationToken ct = default)
@@ -410,8 +410,8 @@ public sealed class FileStorage : IFileStorage
     /// Lists the immediate sub-directory names directly under <paramref name="parentDirectory"/>
     /// (or the top-level directories when null/empty). <b>Privileged</b>: this method is exposed
     /// only on the concrete <see cref="FileStorage"/> class, never through <c>IFileStorage</c>,
-    /// and is never evaluated by the rules engine — mirroring Firestore's Admin-SDK-only
-    /// <c>listCollectionIds</c> which security rules never intercept.
+    /// and is never evaluated by the rules engine (like the database's
+    /// <c>ListCollectionIdsAsync</c>): it's for the server's own code.
     /// Directory names are distinct and ordered by UTF-8 byte order (COLLATE "C").
     /// </summary>
     public async Task<ListDirectoryIdsResult> ListDirectoryIdsAsync(

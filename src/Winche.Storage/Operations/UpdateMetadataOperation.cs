@@ -10,8 +10,7 @@ namespace Winche.Storage.Operations;
 internal sealed class UpdateMetadataOperation(NpgsqlConnection conn, NpgsqlTransaction? tx)
 {
     /// <summary>
-    /// The metadata after a patch: each key set to its new value, a null value removing the key (as Firebase's
-    /// custom metadata).
+    /// The metadata after a patch: each key set to its new value, a null value removing the key.
     /// </summary>
     internal static JsonObject Merge(JsonObject current, JsonObject patch)
     {

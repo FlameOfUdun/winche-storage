@@ -6,7 +6,7 @@ namespace Winche.Storage.Models;
 public sealed record FileListOptions(int? MaxResults = null, string? PageToken = null, string? MimeType = null);
 
 /// <summary>
-/// One page of a folder, as Firebase's <c>list()</c>: the files directly in it and its sub-folders (as full paths), in
+/// One page of a folder: the files directly in it and its sub-folders (as full paths), in
 /// name order; <see cref="NextPageToken"/> fetches the rest, null when there's no more.
 /// </summary>
 public sealed record FileListResult(

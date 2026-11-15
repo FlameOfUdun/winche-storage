@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace Winche.Storage.Models;
 
 /// <summary>
-/// How downloads of a file are served, as Firebase's settable metadata: <see cref="ContentDisposition"/> (e.g.
+/// How downloads of a file are served: <see cref="ContentDisposition"/> (e.g.
 /// <c>attachment; filename="report.pdf"</c>) and <see cref="CacheControl"/> (e.g. <c>public, max-age=3600</c>). In an
 /// update, null leaves a header as it is and <c>""</c> clears it.
 /// </summary>

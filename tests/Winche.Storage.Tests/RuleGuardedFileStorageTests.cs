@@ -73,7 +73,7 @@ public class RuleGuardedFileStorageTests
     }
 
     [Fact]
-    public async Task Rules_may_use_firebase_names_size_and_contentType()
+    public async Task Rules_may_say_size_and_contentType_for_sizeBytes_and_mimeType()
     {
         var inner = new RecordingFileStorage();
         var guarded = Guarded(inner, rb =>

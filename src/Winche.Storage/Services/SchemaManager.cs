@@ -76,7 +76,7 @@ internal sealed class SchemaManager(
             CREATE INDEX IF NOT EXISTS idx_{WincheStorageTables.Files}_object_key ON {WincheStorageTables.Files} (object_key);
             CREATE INDEX IF NOT EXISTS idx_{WincheStorageTables.Files}_upload_key ON {WincheStorageTables.Files} (upload_key);
             """;
-        // Step 4: download headers a file can set (Firebase's contentDisposition and cacheControl).
+        // Step 4: download headers a file can set (contentDisposition and cacheControl).
         const string headers = $"ALTER TABLE {WincheStorageTables.Files} ADD COLUMN IF NOT EXISTS content_disposition text, ADD COLUMN IF NOT EXISTS cache_control text";
         // Step 5: hooks consume storage's change feed (Winche.Core); the per-hook outbox is gone with what it held.
         const string feed = $"DROP TABLE IF EXISTS {WincheStorageTables.HookDeliveries};";

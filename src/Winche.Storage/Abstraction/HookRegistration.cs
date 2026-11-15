@@ -1,7 +1,7 @@
 namespace Winche.Storage.Abstraction;
 
 /// <summary>
-/// Binds a Firestore-style path pattern to the <see cref="FileStoreHook"/> that fires for matching
+/// Binds a path pattern to the <see cref="FileStoreHook"/> that fires for matching
 /// files. The hook supplies behavior; the path is supplied at registration time, so one hook type
 /// can be bound to multiple paths.
 ///
