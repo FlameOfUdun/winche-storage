@@ -10,7 +10,7 @@ Access control is enforced with [Winche.Rules](https://github.com/FlameOfUdun/wi
 | --- | --- |
 | `Winche.Storage` | Core: schema management, file CRUD, hooks, Winche.Rules guard |
 | `Winche.Storage.S3` | S3-compatible archive provider (presigned URLs, multipart upload) |
-| `Winche.Storage.FileSystem` | A folder on disk (or a mounted volume) as the archive, through signed URLs your app serves (9.1.0) |
+| `Winche.Storage.FileSystem` | A folder on disk (or a mounted volume) as the archive, through signed URLs your app serves (10.0.0) |
 | `Winche.Storage.AspNetCore` | ASP.NET Core base: `MapClaims`, a storage-specific override of the caller the host sets once for every Winche package (`AddWincheCaller` + `UseWincheCaller`, Winche.Core.AspNetCore) |
 | `Winche.Storage.AspNetCore.Rest` | Minimal-API REST endpoints (depends on the base package) |
 
@@ -411,7 +411,7 @@ or download straight to and from it. Pick an archive, or write one.
 `opts.UseS3Archive(s3 => …)` (`Winche.Storage.S3`): AWS S3, MinIO, Cloudflare R2, Backblaze B2, Wasabi, … Downloads
 carry the file's type and headers as response-header overrides signed into the link.
 
-### A folder on disk (9.1.0)
+### A folder on disk (10.0.0)
 
 ```csharp
 builder.Services.AddWincheStorage(opts =>
@@ -457,7 +457,7 @@ promises:
 Anything that can hand out a URL works — another cloud's signed URLs (Azure SAS, Google Cloud Storage), or endpoints in
 your own app as `Winche.Storage.FileSystem` does (its source is a complete example).
 
-## Request logging (9.1.0)
+## Request logging (10.0.0)
 
 `opts.LogRequests()` logs app requests that go through the access rules in the category `Winche.Storage.Requests` as
 structured entries — `Operation` (`storage.create`, `storage.get`, `storage.upload`, `storage.confirm`,
