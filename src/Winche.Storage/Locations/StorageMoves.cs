@@ -5,6 +5,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Winche.Core;
+using Winche.Secrets;
 using Winche.Storage.Constants;
 using Winche.Storage.Interfaces;
 

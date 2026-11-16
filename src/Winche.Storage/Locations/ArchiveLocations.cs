@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Winche.Core;
+using Winche.Secrets;
 using Winche.Storage.Interfaces;
 
 namespace Winche.Storage.Locations;

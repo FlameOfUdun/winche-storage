@@ -23,6 +23,7 @@ public static class ServiceCollectionExtensions
         // (.NET DI returns the last-registered singleton).
         services.AddSingleton<IRuleClaimsAccessor>(WincheCallerClaimsAccessor.Instance);
         services.AddSingleton<IArchive, NullArchive>();
+        Winche.Secrets.SecretsServiceCollectionExtensions.AddWincheSecrets(services);   // keys of locations set in the console
 
         var options = new WincheStorageOptions(services);
         configure(options);
