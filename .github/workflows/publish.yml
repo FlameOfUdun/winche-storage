@@ -1,12 +1,16 @@
 name: Publish
 
+# Push a tag v<version> (the <Version> in the projects, e.g. v1.2.0) to publish every package here to nuget.org.
+# Winche packages depend on each other through nuget.org, so release in order: Winche.Core, Winche.Rules, then
+# Winche.Database, Winche.Storage, Winche.Auth and Winche.Webhooks, then Winche.Functions, then Winche.Cli.
+
 on:
   push:
     tags:
       - 'v*'
 
 permissions:
-  id-token: write   # NuGet trusted publishing (OIDC)
+  id-token: write   # NuGet trusted publishing (OIDC): no API key is stored
   contents: read
 
 jobs:
@@ -21,19 +25,31 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: The tag matches the version
+        run: |
+          version=$(dotnet msbuild src/Winche.Storage/Winche.Storage.csproj -getProperty:Version)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match the version in the projects ($version)."
+            exit 1
+          fi
+
       - name: Restore
         run: dotnet restore Winche.Storage.slnx
 
       - name: Build
         run: dotnet build Winche.Storage.slnx -c Release --no-restore
 
+      # Tests use PostgreSQL in Docker (Testcontainers), which GitHub's Ubuntu runners have.
+      - name: Test
+        run: dotnet test Winche.Storage.slnx -c Release --no-build
+
       - name: Pack
         run: |
           dotnet pack src/Winche.Storage/Winche.Storage.csproj -c Release --no-build -o ./packages
           dotnet pack src/Winche.Storage.AspNetCore/Winche.Storage.AspNetCore.csproj -c Release --no-build -o ./packages
           dotnet pack src/Winche.Storage.AspNetCore.Rest/Winche.Storage.AspNetCore.Rest.csproj -c Release --no-build -o ./packages
-          dotnet pack src/Winche.Storage.S3/Winche.Storage.S3.csproj -c Release --no-build -o ./packages
           dotnet pack src/Winche.Storage.FileSystem/Winche.Storage.FileSystem.csproj -c Release --no-build -o ./packages
+          dotnet pack src/Winche.Storage.S3/Winche.Storage.S3.csproj -c Release --no-build -o ./packages
 
       # Exchange the GitHub OIDC token for a short-lived NuGet.org API key.
       - name: NuGet login (trusted publishing)
@@ -43,4 +59,4 @@ jobs:
           user: FlameOfUdun
 
       - name: Push
-        run: dotnet nuget push ./packages/*.nupkg ./packages/*.snupkg --source https://api.nuget.org/v3/index.json --api-key ${{ steps.login.outputs.NUGET_API_KEY }} --skip-duplicate
+        run: dotnet nuget push ./packages/*.nupkg --source https://api.nuget.org/v3/index.json --api-key ${{ steps.login.outputs.NUGET_API_KEY }} --skip-duplicate
