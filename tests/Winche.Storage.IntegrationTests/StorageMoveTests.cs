@@ -101,6 +101,42 @@ public class StorageMoveTests(PostgresFixture fixture) : IClassFixture<PostgresF
         Id = "r2-main", Kind = "s3", S3 = new S3LocationSettings { Bucket = "clinic-files", Region = "auto", ServiceUrl = "https://acct.r2.cloudflarestorage.com", AccessKey = "AK" },
     };
 
+    /// <summary>Builds an archive for any key, counting how often.</summary>
+    private sealed class CountingBuckets : IArchiveProvider
+    {
+        public List<string?> Built { get; } = [];
+        public string Kind => "s3";
+        public IArchive Create(ArchiveLocation location, string? secretKey) { Built.Add(secretKey); return new MemoryArchive(location.S3!.Bucket); }
+    }
+
+    [Fact]
+    public async Task A_locations_archive_is_built_again_when_its_keys_value_changes_not_when_its_set_again()
+    {
+        var buckets = new CountingBuckets();
+        var builder = Host.CreateApplicationBuilder();
+        builder.Services.AddWincheConfig(o => { o.ConnectionString = ConnectionString; o.MasterKey = "storage-move-tests-master-key-0123456789"; });
+        builder.Services.AddWincheStorage(o => { o.ConnectionString = ConnectionString; o.UseSettings(); });
+        builder.Services.AddSingleton<IArchive>(new MemoryArchive("code"));
+        builder.Services.AddSingleton<IArchiveProvider>(buckets);
+        using var host = builder.Build();
+        await host.InitializeWincheStorageAsync();
+        await host.StartAsync();
+        try
+        {
+            var secrets = host.Services.GetRequiredService<Winche.Secrets.SecretStore>();
+            var locations = host.Services.GetRequiredService<Winche.Storage.Locations.ArchiveLocations>();
+            await secrets.SetAsync(Bucket.SecretName, "key-1", "admin@x");
+            var first = await locations.GetAsync(Bucket);
+            Assert.Same(first, await locations.GetAsync(Bucket));
+            await secrets.SetAsync(Bucket.SecretName, "key-1", "someone-else@x");   // the same value saved again
+            Assert.Same(first, await locations.GetAsync(Bucket));
+            await secrets.SetAsync(Bucket.SecretName, "key-2", "admin@x");          // rotated (here, or where a reference points)
+            Assert.NotSame(first, await locations.GetAsync(Bucket));
+            Assert.Equal(["key-1", "key-2"], buckets.Built);
+        }
+        finally { await host.StopAsync(); }
+    }
+
     [Fact]
     public async Task Files_are_copied_then_switched_with_reads_falling_back_until_finished()
     {

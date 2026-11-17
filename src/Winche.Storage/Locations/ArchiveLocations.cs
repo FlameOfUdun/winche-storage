@@ -9,7 +9,7 @@ namespace Winche.Storage.Locations;
 /// <summary>Builds (and keeps) the archive for each location: the code's one, or one made by a provider from settings.</summary>
 public sealed class ArchiveLocations(IServiceProvider services, Func<IArchive> code)
 {
-    private readonly ConcurrentDictionary<string, (IArchive Archive, DateTimeOffset? SecretSetAt)> _built = new();
+    private readonly ConcurrentDictionary<string, (IArchive Archive, string? SecretStamp)> _built = new();
 
     public IReadOnlyList<string> Kinds => [.. services.GetServices<IArchiveProvider>().Select(p => p.Kind)];
 
@@ -20,12 +20,16 @@ public sealed class ArchiveLocations(IServiceProvider services, Func<IArchive> c
     {
         if (location is null || location.Kind == "code") return Code;
         var secrets = services.GetService<SecretStore>();
-        var info = secrets is null ? null : await secrets.InfoAsync(location.SecretName, ct);
         var key = $"{location.Id}|{System.Text.Json.JsonSerializer.Serialize(location)}";
-        if (_built.TryGetValue(key, out var hit) && hit.SecretSetAt == info?.SetAt) return hit.Archive;
-        var secret = secrets is null || info is null ? null : await secrets.GetAsync(location.SecretName, ct);
+        var cached = _built.TryGetValue(key, out var hit);
+        // The key's value, not when it was set: one read from elsewhere (AWS) may change there (a rotation).
+        string? secret;
+        try { secret = secrets is null ? null : await secrets.GetAsync(location.SecretName, ct); }
+        catch (SecretReferenceException) when (cached) { return hit.Archive; }   // can't be read just now: keep using the one that works
+        var stamp = secret is null ? null : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(secret)));
+        if (cached && hit.SecretStamp == stamp) return hit.Archive;
         var archive = Build(location, secret);
-        _built[key] = (archive, info?.SetAt);
+        _built[key] = (archive, stamp);
         return archive;
     }
 
