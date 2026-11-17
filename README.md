@@ -700,6 +700,13 @@ public sealed class Browser(FileStorage files)   // concrete = privileged
 | `createdAt` | `DateTime` | Creation timestamp |
 | `updatedAt` | `DateTime` | Last-modified timestamp |
 
+## Upgrading to 11.0
+
+**Breaking:** a location's secret key (an S3 bucket's) is kept by [Winche.Secrets](https://github.com/FlameOfUdun/winche-secrets) instead of Winche.Core (Core 2.0);
+`AddWincheStorage` adds the store. Saved keys read as before. A key can now be a reference to AWS Secrets Manager or
+Parameter Store, and a location follows its key's value: when it changes there (a rotation), the location is rebuilt
+with the new one, and keeps working with the old one while the new one can't be read.
+
 ## Requirements
 
 - .NET 10 SDK (`net10.0`)
