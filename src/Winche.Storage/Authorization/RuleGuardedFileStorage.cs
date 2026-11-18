@@ -46,6 +46,17 @@ public sealed class RuleGuardedFileStorage(
         return await inner.SetAsync(path, mimeType, sizeBytes, metadata, precondition, headers, ct);
     }
 
+    /// <summary>
+    /// Stores <paramref name="content"/> as the file at <paramref name="path"/> in one step (no upload link), as the
+    /// caller: the rules' create or update decides, in the write's transaction. Only over the server's own
+    /// <see cref="Services.FileStorage"/>.
+    /// </summary>
+    public Task<FileRecord> WriteAsync(string path, Stream content, string mimeType, long sizeBytes, JsonObject? metadata = null,
+        FileHeaders? headers = null, CancellationToken ct = default) =>
+        Logged("storage.create", path, () => inner is Services.FileStorage core
+            ? core.WriteAsync(path, content, mimeType, sizeBytes, metadata, headers, Check(path), ct)
+            : throw new NotSupportedException("Writing bytes in one step needs the server's own file storage."));
+
     public Task<FileRecord?> GetAsync(string path, CancellationToken ct = default) =>
         Logged("storage.get", path, () => GetCoreAsync(path, ct));
 

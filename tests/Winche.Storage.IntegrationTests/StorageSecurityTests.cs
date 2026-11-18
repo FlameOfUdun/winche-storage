@@ -32,6 +32,24 @@ public class StorageSecurityTests(PostgresFixture fixture) : IClassFixture<Postg
     private static JsonObject Owner(string uid) => new() { ["owner"] = uid };
 
     [Fact]
+    public async Task A_one_step_write_as_a_user_is_checked_by_the_rules_in_its_transaction()
+    {
+        var archive = new MemoryArchive("mem");
+        var core = new FileStorage(fixture.DataSource, archive, new HookInvocationDispatcher([]));
+        var engine = new RuleEngine(new StaticRuleSetRepository(RuleText.ParseRuleSet(OwnerRules)));
+        RuleGuardedFileStorage As(string uid) => new(core, engine, () => new Dictionary<string, object?> { ["uid"] = uid });
+
+        var written = await As("alice").WriteAsync("notes/a.txt", new MemoryStream("hi"u8.ToArray()), "text/plain", 2, Owner("alice"));
+        Assert.Equal(UploadStatus.Complete, written.UploadStatus);
+        await Assert.ThrowsAsync<AccessDeniedException>(() =>
+            As("mallory").WriteAsync("notes/a.txt", new MemoryStream("no"u8.ToArray()), "text/plain", 2, Owner("mallory")));
+        await Assert.ThrowsAsync<AccessDeniedException>(() =>
+            As("bob").WriteAsync("notes/b.txt", new MemoryStream("x"u8.ToArray()), "text/plain", 1, Owner("alice")));   // not his to create
+        Assert.Equal("alice", (string?)(await core.GetAsync("notes/a.txt"))!.MetaData["owner"]);
+        Assert.Null(await core.GetAsync("notes/b.txt"));
+    }
+
+    [Fact]
     public async Task Registering_over_someone_elses_file_is_checked_as_an_update_of_it()
     {
         var (core, a) = Storage();

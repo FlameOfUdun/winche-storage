@@ -362,12 +362,17 @@ public sealed class FileStorage : IFileStorage
     /// <paramref name="path"/>, new or replacing what's there, without an upload link. Not rule-checked, like the rest
     /// of this class; hooks and changes fire as for an upload.
     /// </summary>
-    public async Task<FileRecord> WriteAsync(string path, Stream content, string mimeType, long sizeBytes,
-        JsonObject? metadata = null, FileHeaders? headers = null, CancellationToken ct = default)
+    public Task<FileRecord> WriteAsync(string path, Stream content, string mimeType, long sizeBytes,
+        JsonObject? metadata = null, FileHeaders? headers = null, CancellationToken ct = default) =>
+        WriteAsync(path, content, mimeType, sizeBytes, metadata, headers, null, ct);
+
+    /// <summary>As above, with <paramref name="check"/> (the access rules) run on the file it creates or replaces.</summary>
+    internal async Task<FileRecord> WriteAsync(string path, Stream content, string mimeType, long sizeBytes,
+        JsonObject? metadata, FileHeaders? headers, FileCheck? check, CancellationToken ct)
     {
         if (archive is not Locations.IArchiveContent bytes)
             throw new NotSupportedException("This archive can't take bytes from the server.");
-        var file = await SetAsync(path, mimeType, sizeBytes, metadata, null, headers, ct);
+        var file = await SetAsync(path, mimeType, sizeBytes, metadata, null, headers, check, ct);
         await bytes.WriteAsync(UploadKeyOf(file), content, mimeType, ct);
         return await ConfirmUploadAsync(path, ct);
     }
