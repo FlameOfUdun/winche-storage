@@ -53,6 +53,27 @@ public sealed class WincheStorageOptions
         return this;
     }
 
+    /// <summary>
+    /// Keeps top-level <paramref name="folders"/> for the server (e.g. <c>realtime</c>, where another product archives):
+    /// app users can't read, write, list or delete in them, nor see them in file references, whatever the rules say.
+    /// The server's own <see cref="Services.FileStorage"/> (the console, functions with the server's rights) still can.
+    /// </summary>
+    public WincheStorageOptions KeepFromApps(params string[] folders)
+    {
+        foreach (var folder in folders)
+        {
+            var name = folder.Trim('/');
+            if (name.Length == 0 || name.Contains('/')) throw new ArgumentException($"'{folder}' isn't a top-level folder.", nameof(folders));
+            if (!_keptFromApps.Contains(name)) _keptFromApps.Add(name);
+        }
+        return this;
+    }
+
+    private readonly List<string> _keptFromApps = [];
+
+    /// <summary>The folders kept from apps (<see cref="KeepFromApps"/>).</summary>
+    public IReadOnlyList<string> KeptFromApps => _keptFromApps;
+
     /// <summary>Whether the console may change these settings (<see cref="UseSettings"/>).</summary>
     public bool SettingsEnabled { get; private set; }
 

@@ -12,7 +12,7 @@ namespace Winche.Storage.Services;
 /// with the file's record (type, size, metadata, upload status; never a download link, which expires: the app asks
 /// storage for one). Read as the caller: a file the storage rules don't let them <c>get</c> stays a plain path.
 /// </summary>
-internal sealed class FileReferenceResolver(FileStorage files, RuleEngine engine) : IWincheReferenceResolver
+internal sealed class FileReferenceResolver(FileStorage files, RuleEngine engine, IReadOnlyCollection<string>? keptFromApps = null) : IWincheReferenceResolver
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -23,7 +23,7 @@ internal sealed class FileReferenceResolver(FileStorage files, RuleEngine engine
 
     public async Task<IReadOnlyDictionary<string, JsonObject>> ResolveAsync(IReadOnlyList<string> keys, ReferenceCaller caller, CancellationToken ct)
     {
-        Interfaces.IFileStorage reader = caller.Trusted ? files : new RuleGuardedFileStorage(files, engine, () => caller.Claims);
+        Interfaces.IFileStorage reader = caller.Trusted ? files : new RuleGuardedFileStorage(files, engine, () => caller.Claims, keptFromApps);
         var found = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var key in keys)
         {

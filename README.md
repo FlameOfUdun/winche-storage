@@ -141,6 +141,7 @@ services.AddWincheStorage(opts =>
 | `UseRulesFile(path)` / `UseRulesText(text)` / `UseRules(RuleSet)` | Adds rules to the guard. Multiple calls accumulate (OR-combined). |
 | `UseHooks(h => h.Add<T>(path))` | Registers `FileStoreHook` lifecycle listeners, each bound to a path pattern. |
 | `UseOrphanSweep(...)` | Enables the background sweep that reclaims archive objects with no matching DB row. See [Orphan Sweep](#orphan-sweep). |
+| `KeepFromApps("realtime", ...)` | Top-level folders the server keeps for itself: app users can't read, write, list or delete in them, nor see them in file references, whatever the rules say. The server's own `FileStorage` still can. (11.2.0) |
 | `MaxFileSizeBytes` | Largest file a client may register (`null`, the default: no limit beyond the archive's). Larger is `invalid-argument` (reason `too-large`); multipart parts that don't add up to the declared size are refused at confirm. |
 | `UseSettings()` | Lets the Winche console change the size limit, request logging and the orphan sweep without a deploy; code values are the starting ones. Needs `AddWincheConfig(…)`. |
 | `LogRequests(...)` | Logs requests that go through the rules. See [Request logging](#request-logging-910). |
@@ -699,6 +700,10 @@ public sealed class Browser(FileStorage files)   // concrete = privileged
 | `version` | `long` | Goes up with each registration and metadata change; `precondition.version` holds a write to it |
 | `createdAt` | `DateTime` | Creation timestamp |
 | `updatedAt` | `DateTime` | Last-modified timestamp |
+
+## Upgrading to 11.2
+
+- New: `KeepFromApps(folders)`. Nothing changes unless it's called.
 
 ## Upgrading to 11.0
 

@@ -12,20 +12,38 @@ namespace Winche.Storage.Authorization;
 /// Every operation authorizes via the engine before delegating to the inner core. For trusted server-side
 /// callers that must bypass the rules engine, resolve the concrete <see cref="Services.FileStorage"/> instead.
 /// </summary>
+/// <param name="keptFromApps">
+/// Top-level folders the server keeps for itself (<see cref="DependencyInjection.WincheStorageOptions.KeepFromApps"/>):
+/// refused here whatever the rules say, and left out of the top folder's listing.
+/// </param>
 public sealed class RuleGuardedFileStorage(
     IFileStorage inner,
     RuleEngine engine,
-    Func<IReadOnlyDictionary<string, object?>?> claimsProvider)
+    Func<IReadOnlyDictionary<string, object?>?> claimsProvider,
+    IReadOnlyCollection<string>? keptFromApps = null)
     : IFileStorage
 {
     private Logging.RequestLog? _log;
+    private readonly IReadOnlyCollection<string> _kept = keptFromApps ?? [];
 
     /// <summary>As above, logging each request (<see cref="DependencyInjection.WincheStorageOptions.LogRequests"/>).</summary>
     internal RuleGuardedFileStorage(IFileStorage inner, RuleEngine engine, Func<IReadOnlyDictionary<string, object?>?> claimsProvider,
-        Logging.RequestLog? log) : this(inner, engine, claimsProvider) => _log = log;
+        Logging.RequestLog? log, IReadOnlyCollection<string>? keptFromApps = null) : this(inner, engine, claimsProvider, keptFromApps) => _log = log;
 
-    private Task<T> Logged<T>(string operation, string path, Func<Task<T>> body) =>
-        _log is null ? body() : _log.RunAsync(operation, path, body);
+    /// <summary>Whether <paramref name="path"/> is, or is in, a folder kept from apps.</summary>
+    private bool Kept(string path) => _kept.Count > 0 && _kept.Contains(path.Replace('\\', '/').TrimStart('/').Split('/', 2)[0], StringComparer.Ordinal);
+
+    private Task<T> Logged<T>(string operation, string path, Func<Task<T>> body)
+    {
+        // A folder kept from apps is refused before anything is read (and logged like any refusal).
+        if (Kept(path)) body = () =>
+        {
+            var method = operation[(operation.IndexOf('.') + 1)..];
+            Services.WincheStorageMetrics.AccessDenied.Add(1, new KeyValuePair<string, object?>("operation", method));
+            throw new AccessDeniedException(path, method);
+        };
+        return _log is null ? body() : _log.RunAsync(operation, path, body);
+    }
 
     // ── Protected operations ──────────────────────────────────────────────────
 
@@ -133,7 +151,10 @@ public sealed class RuleGuardedFileStorage(
     private async Task<FileListResult> ListCoreAsync(string directory, FileListOptions? options, CancellationToken ct)
     {
         await AuthorizeAsync(RuleOperation.List, directory, RuleValues.Null, "list", ct);
-        return await inner.ListAsync(directory, options, ct);
+        var page = await inner.ListAsync(directory, options, ct);
+        if (_kept.Count == 0 || directory.Trim('/').Length > 0) return page;
+        // The top: folders kept from apps aren't listed.
+        return page with { Items = page.Items.Where(f => !Kept(f.Path)).ToList(), Prefixes = page.Prefixes.Where(p => !Kept(p)).ToList() };
     }
 
     public Task<UploadSession> SignPartAsync(string path, int partNumber, CancellationToken ct = default) =>
@@ -169,6 +190,11 @@ public sealed class RuleGuardedFileStorage(
 
     private async Task AuthorizeAsync(RuleOperation operation, string path, Value resource, string method, CancellationToken ct, Value? requestResource = null)
     {
+        if (Kept(path))
+        {
+            Services.WincheStorageMetrics.AccessDenied.Add(1, new KeyValuePair<string, object?>("operation", method));
+            throw new AccessDeniedException(path, method);
+        }
         var request = new RuleRequest
         {
             Resource = resource,

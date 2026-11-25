@@ -103,13 +103,14 @@ public static class ServiceCollectionExtensions
                         (sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>() ?? Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance)
                             .CreateLogger(Logging.RequestLog.Category),
                         () => options.RequestLog, () => sp.GetRequiredService<IRuleClaimsAccessor>().GetClaims())
-                    : null));
+                    : null,
+                options.KeptFromApps));
         services.AddSingleton<IFileStorage>(sp =>
             sp.GetRequiredService<RuleGuardedFileStorage>());
 
         // file: for the database's expand (a document field holding a file path comes back with the file's record).
         services.AddSingleton<IWincheReferenceResolver>(sp => new FileReferenceResolver(
-            sp.GetRequiredService<FileStorage>(), sp.GetRequiredKeyedService<RuleEngine>(WincheStorageKeys.RULE_ENGINE_KEY)));
+            sp.GetRequiredService<FileStorage>(), sp.GetRequiredKeyedService<RuleEngine>(WincheStorageKeys.RULE_ENGINE_KEY), options.KeptFromApps));
 
         return services;
     }

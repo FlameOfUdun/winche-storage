@@ -14,6 +14,25 @@ public class RuleGuardedFileStorageTests
         new(inner, new RuleEngine(new StaticRuleSetRepository(RuleSetBuilder.Build(rules))), () => null);
 
     [Fact]
+    public async Task Folders_kept_from_apps_are_refused_whatever_the_rules_say()
+    {
+        var inner = new RecordingFileStorage { DeleteReturns = true };
+        var guarded = new RuleGuardedFileStorage(inner,
+            new RuleEngine(new StaticRuleSetRepository(RuleSetBuilder.Build(rb => rb.Match("{path=**}", mb => mb.Allow(
+                [RuleOperation.Get, RuleOperation.List, RuleOperation.Create, RuleOperation.Update, RuleOperation.Delete], Expr.Const(true)))))),
+            () => null, keptFromApps: ["realtime"]);
+
+        await Assert.ThrowsAsync<AccessDeniedException>(() => guarded.GetAsync("realtime/sessions/s1/a.ndjson.gz"));
+        await Assert.ThrowsAsync<AccessDeniedException>(() => guarded.SetAsync("realtime/forged", "text/plain", 1));
+        await Assert.ThrowsAsync<AccessDeniedException>(() => guarded.DeleteAsync("realtime"));
+        await Assert.ThrowsAsync<AccessDeniedException>(() => guarded.ListAsync("realtime/sessions"));
+        await Assert.ThrowsAsync<AccessDeniedException>(() => guarded.GenerateDownloadUrlAsync("realtime/x"));
+        Assert.DoesNotContain(inner.Calls, c => c.Contains(":realtime"));
+        Assert.True(await guarded.DeleteAsync("realtimes/x"));   // only the folder itself
+        // (The top folder's listing leaves them out too, should a rule ever allow listing it: no rule matches the empty path.)
+    }
+
+    [Fact]
     public async Task Allowed_operation_delegates_to_the_inner_core()
     {
         var inner = new RecordingFileStorage { DeleteReturns = true };

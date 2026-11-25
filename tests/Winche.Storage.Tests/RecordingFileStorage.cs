@@ -32,7 +32,12 @@ internal sealed class RecordingFileStorage : IFileStorage
     public Task<UploadSession> GenerateUploadUrlAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<DownloadSession> GenerateDownloadUrlAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<FileRecord> ConfirmUploadAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<FileListResult> ListAsync(string directory, FileListOptions? options = null, CancellationToken ct = default) => throw new NotImplementedException();
+    public FileListResult? ListReturns { get; set; }
+    public Task<FileListResult> ListAsync(string directory, FileListOptions? options = null, CancellationToken ct = default)
+    {
+        Calls.Add($"List:{directory}");
+        return ListReturns is { } page ? Task.FromResult(page) : throw new NotImplementedException();
+    }
     public Task<UploadSession> SignPartAsync(string path, int partNumber, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<IEnumerable<FilePart>> ListUploadedPartsAsync(string path, CancellationToken ct = default) => throw new NotImplementedException();
 }
