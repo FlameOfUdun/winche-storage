@@ -153,7 +153,8 @@ public sealed class RuleGuardedFileStorage(
         await AuthorizeAsync(RuleOperation.List, directory, RuleValues.Null, "list", ct);
         var page = await inner.ListAsync(directory, options, ct);
         if (_kept.Count == 0 || directory.Trim('/').Length > 0) return page;
-        // The top: folders kept from apps aren't listed.
+        // The top: folders kept from apps aren't listed. (A backstop: no rule matches the empty path, so listing the top is
+        // refused above for apps today; if a rule ever could, a page here may come back short, its next page token still right.)
         return page with { Items = page.Items.Where(f => !Kept(f.Path)).ToList(), Prefixes = page.Prefixes.Where(p => !Kept(p)).ToList() };
     }
 
